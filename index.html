@@ -1107,6 +1107,13 @@ table.grid { table-layout: fixed; }
   transform-origin: top center;
 }
 
+.print-preview-page--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
 .print-preview-toolbar {
   position: sticky;
   top: 0;
@@ -4526,6 +4533,7 @@ PH.print = (function () {
     // printing a hard "0.0000" for a field that was never on the row.
     var totalField = opts.printTotalField || null;
 
+    if (container.__pageObserver) { container.__pageObserver.disconnect(); container.__pageObserver = null; }
     container.innerHTML = "";
     var shell = el("div", { class: "print-preview-shell" });
     var carryForward = totalField ? 0n : null;
@@ -4547,10 +4555,40 @@ PH.print = (function () {
       pageData.grandTotal = grandTotal;
       pageData.filteredMarker = opts.isFiltered ? "(مصفّى)" : "";
       pageData.filledMarker = opts.hasFilledMoney ? "(مملوء)" : "";
+    });
+
+    function realizePage(idx) {
+      var pageData = pagesResult.pages[idx];
       var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo);
       var wrapper = el("div", { class: "print-preview-page" });
       wrapper.appendChild(pageEl);
-      shell.appendChild(wrapper);
+      return wrapper;
+    }
+
+    var EAGER_PAGE_COUNT = 3;
+    var useLazy = pagesResult.pages.length > EAGER_PAGE_COUNT && typeof IntersectionObserver === "function";
+    var observer = null;
+    if (useLazy) {
+      observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          var placeholder = entry.target;
+          var idx = Number(placeholder.getAttribute("data-page-index"));
+          placeholder.replaceWith(realizePage(idx));
+          observer.unobserve(placeholder);
+        });
+      }, { root: container, rootMargin: "800px 0px" });
+      container.__pageObserver = observer;
+    }
+
+    pagesResult.pages.forEach(function (pageData, idx) {
+      if (!useLazy || idx < EAGER_PAGE_COUNT) {
+        shell.appendChild(realizePage(idx));
+      } else {
+        var placeholder = el("div", { class: "print-preview-page print-preview-page--placeholder", "data-page-index": String(idx), style: "height:" + geometry.pageHeightMm + "mm;" });
+        shell.appendChild(placeholder);
+        observer.observe(placeholder);
+      }
     });
     container.appendChild(shell);
     return pagesResult;
@@ -6906,7 +6944,7 @@ PH.app = (function () {
     body.appendChild(calPanel);
     overlay.appendChild(toolbar);
     overlay.appendChild(body);
-    registerDialog(overlay, { onClose: function () { PH.print.clearMeasureCache(); } });
+    registerDialog(overlay, { onClose: function () { PH.print.clearMeasureCache(); if (previewContainer.__pageObserver) previewContainer.__pageObserver.disconnect(); } });
 
     function refreshPreview() {
       if (showingRuler) {
