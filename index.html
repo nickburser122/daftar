@@ -1400,6 +1400,7 @@ PH.config = (function () {
   };
 
   var MONEY_COLUMNS = { value: true, cumulative: true, price: true, priceAvg: true, priceMin: true, priceMax: true, movingAvg: true, valueOut: true };
+  var MAX_SAFE_SCALED = BigInt(Number.MAX_SAFE_INTEGER);
   var BRASS_COLUMNS = { value: true, cumulative: true, priceAvg: true, priceMin: true, priceMax: true, movingAvg: true, valueOut: true };
   // Columns that exist for on-screen interaction only (row id for
   // drilldown/edit wiring, the actions cell) and were never meant to be
@@ -1439,6 +1440,7 @@ PH.config = (function () {
     BLOCK_SIZE_PRESETS: BLOCK_SIZE_PRESETS,
     COLUMN_LABELS: COLUMN_LABELS,
     MONEY_COLUMNS: MONEY_COLUMNS,
+    MAX_SAFE_SCALED: MAX_SAFE_SCALED,
     BRASS_COLUMNS: BRASS_COLUMNS,
     VIRTUAL_COLUMNS: VIRTUAL_COLUMNS,
     printableColumns: printableColumns
@@ -4744,6 +4746,167 @@ PH.print = (function () {
 
 window.PH = window.PH || {};
 
+PH.exportPlan = (function () {
+  var blk = PH.blocks;
+  var paginate = PH.paginate;
+
+  function sumField(rows, field) {
+    if (!field) return 0n;
+    return rows.reduce(function (acc, r) {
+      if (r.isGrandTotal || r.isSubtotal || typeof r[field] !== "bigint") return acc;
+      return acc + r[field];
+    }, 0n);
+  }
+
+  function chunkSum(slots, field) {
+    return slots.reduce(function (acc, slot) {
+      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
+      return acc + slot.row[field];
+    }, 0n);
+  }
+
+  function embeddedRows(rows, field, rowsPerPage, labelColumn, carryForward, wantGrand) {
+    var pages = paginate.buildPagesFromBlocked(rows, rowsPerPage || 24);
+    var out = [];
+    var carry = 0n;
+    pages.pages.forEach(function (page, idx) {
+      page.rows.forEach(function (slot) {
+        if (slot.kind === "data") out.push(slot.row);
+      });
+      var pageTotal = chunkSum(page.rows, field);
+      var totalRow = {};
+      totalRow[labelColumn] = "إجمالي الصفحة " + (idx + 1);
+      totalRow[field] = pageTotal;
+      out.push(totalRow);
+      out.push({});
+      carry += pageTotal;
+      if (carryForward && idx < pages.pages.length - 1) {
+        var carryRow = {};
+        carryRow[labelColumn] = "المنقول من الصفحة السابقة";
+        carryRow[field] = carry;
+        out.push(carryRow);
+      }
+    });
+    if (wantGrand) {
+      var grandRow = {};
+      grandRow[labelColumn] = "الإجمالي الكلي";
+      grandRow[field] = carry;
+      out.push(grandRow);
+    }
+    return out;
+  }
+
+  function totalsRowsFor(rows, totalField, settings, totalsOpts, labelColumn) {
+    var opts = totalsOpts || {};
+    var mode = totalField ? (opts.cumulative || "none") : "none";
+    var wantGrand = opts.grandTotal !== false;
+    var hasBaked = rows.some(function (r) { return r.isGrandTotal; });
+
+    if (mode === "embedded") {
+      var rowsPerPage = (settings && settings.rowsPerPage) || 24;
+      return embeddedRows(rows, totalField, rowsPerPage, labelColumn, !!opts.carryForward, wantGrand && !hasBaked);
+    }
+
+    var out;
+    if (mode === "column") {
+      var cumulativeMode = opts.basis === "running" ? "running" : "block";
+      out = blk.applyBlocks(rows, {
+        blockSize: settings && settings.blockSize,
+        cumulativeMode: cumulativeMode,
+        cumulativeAgg: (settings && settings.cumulativeAgg) || "sum",
+        showPartialBlockTotal: !settings || settings.showPartialBlockTotal !== false,
+        valueField: totalField
+      });
+    } else {
+      out = rows.slice();
+    }
+
+    if (wantGrand && totalField && !hasBaked) {
+      var totalRow = {};
+      totalRow[labelColumn] = "الإجمالي الكلي";
+      totalRow[totalField] = sumField(rows, totalField);
+      out = out.concat([totalRow]);
+    }
+    return out;
+  }
+
+  function buildSingleSheet(entry, plan) {
+    var labelColumn = entry.columns[0];
+    var columns = entry.columns.slice();
+    var totalsOpts = plan.totals || {};
+    if (totalsOpts.cumulative === "column" && entry.printTotalField && columns.indexOf("cumulative") === -1) {
+      columns = columns.concat(["cumulative"]);
+    }
+    var rows = totalsRowsFor(entry.rows, entry.printTotalField, entry.settings, totalsOpts, labelColumn);
+    return {
+      name: entry.reportLabel,
+      columns: columns,
+      rows: rows,
+      meta: { reportId: entry.reportId, sliceKey: entry.sliceKey, combination: entry.combination }
+    };
+  }
+
+  function buildCombinedSheet(reportId, group, plan) {
+    var first = group[0];
+    var labelColumn = first.columns[0];
+    var totalsOpts = plan.totals || {};
+    var baseColumns = first.columns.slice();
+    if (totalsOpts.cumulative === "column" && first.printTotalField && baseColumns.indexOf("cumulative") === -1) {
+      baseColumns = baseColumns.concat(["cumulative"]);
+    }
+    var columns = ["budget", "shift", "dispense"].concat(baseColumns);
+    var sliceOpts = {};
+    for (var k in totalsOpts) sliceOpts[k] = totalsOpts[k];
+    sliceOpts.grandTotal = false;
+
+    var allRows = [];
+    var overall = 0n;
+    group.forEach(function (entry) {
+      overall += sumField(entry.rows, entry.printTotalField);
+      var sliceRows = totalsRowsFor(entry.rows, entry.printTotalField, entry.settings, sliceOpts, labelColumn);
+      var dims = entry.combination || {};
+      sliceRows.forEach(function (r) {
+        var withDims = { budget: dims.budget, shift: dims.shift, dispense: dims.dispense };
+        for (var rk in r) withDims[rk] = r[rk];
+        allRows.push(withDims);
+      });
+    });
+
+    if (totalsOpts.grandTotal !== false && first.printTotalField) {
+      var grandRow = { budget: "الإجمالي الكلي", shift: "", dispense: "" };
+      grandRow[first.printTotalField] = overall;
+      allRows.push(grandRow);
+    }
+
+    return { name: first.reportLabel, columns: columns, rows: allRows, meta: { reportId: reportId, combined: true } };
+  }
+
+  function buildSheets(plan, input) {
+    var byReport = {};
+    (input.sheets || []).forEach(function (e) {
+      (byReport[e.reportId] = byReport[e.reportId] || []).push(e);
+    });
+    var out = [];
+    (plan.reports || []).forEach(function (reportId) {
+      var group = byReport[reportId];
+      if (!group || !group.length) return;
+      if (plan.sheetSplit === "combined" && group.length > 1) {
+        out.push(buildCombinedSheet(reportId, group, plan));
+      } else {
+        group.forEach(function (entry) { out.push(buildSingleSheet(entry, plan)); });
+      }
+    });
+    return out;
+  }
+
+  return { buildSheets: buildSheets };
+})();
+
+
+window.PH = window.PH || {};
+
+window.PH = window.PH || {};
+
 PH.exporter = (function () {
   var cfg = PH.config;
 
@@ -4765,7 +4928,7 @@ PH.exporter = (function () {
 
   function buildFileName(opts) {
     var month = opts.month || "";
-    var reportLabel = slugSpaces(cfg.REPORTS_BY_ID[opts.reportId].label);
+    var reportLabel = slugSpaces(opts.reportLabel);
     var dimSeg = dimensionSegment(opts.combination);
     var parts = [month, reportLabel, dimSeg];
 
@@ -4807,6 +4970,10 @@ PH.exporter = (function () {
         if (typeof v === "number" && isNaN(v)) return null;
         if (typeof v === "bigint") {
           var decimals = cfg.decimalsForColumn(c);
+          var magnitude = v < 0n ? -v : v;
+          if (magnitude > cfg.MAX_SAFE_SCALED) {
+            throw new Error("قيمة العمود \"" + (cfg.COLUMN_LABELS[c] || c) + "\" أكبر من أن تُمثَّل بدقة في جدول بيانات");
+          }
           var n = Number(PH.blocks.formatScaled(v, decimals, false));
           return isNaN(n) ? null : n;
         }
@@ -4919,28 +5086,46 @@ PH.exporter = (function () {
     var wb = XLSX.utils.book_new();
     wb.Workbook = { Views: [{ RTL: true }] };
     var usedNames = [];
-    sheets.forEach(function (sheet) {
-      var ws = buildWorksheet(sheet.rows, sheet.columns);
-      var name = sheetNameFor(sheet.combination, cfg.REPORTS_BY_ID[opts.reportId].label, usedNames);
-      XLSX.utils.book_append_sheet(wb, ws, name);
+    var index = 0;
+    if (opts.onProgress) opts.onProgress(0, sheets.length);
+    return new Promise(function (resolve, reject) {
+      function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) { reject(new Error("تم الإلغاء")); return; }
+        if (index >= sheets.length) {
+          var isMulti = sheets.length > 1;
+          var fileNameCombination = isMulti ? { budget: null, shift: null, dispense: null } : ((sheets[0] && sheets[0].combination) || { budget: null, shift: null, dispense: null });
+          var descriptor = opts.descriptor;
+          if (isMulti) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-أوراق";
+          var fileName = buildFileName({ month: opts.month, reportLabel: opts.reportLabel, combination: fileNameCombination, descriptor: descriptor, ext: "xlsx" });
+          try {
+            XLSX.writeFile(wb, fileName);
+          } catch (err) { reject(err); return; }
+          resolve(fileName);
+          return;
+        }
+        try {
+          var sheet = sheets[index];
+          var ws = buildWorksheet(sheet.rows, sheet.columns);
+          var name = sheetNameFor(sheet.combination, sheet.name, usedNames);
+          XLSX.utils.book_append_sheet(wb, ws, name);
+          index++;
+          if (opts.onProgress) opts.onProgress(index, sheets.length);
+          setTimeout(next, 0);
+        } catch (err) { reject(err); }
+      }
+      next();
     });
-    var isMultiSlice = sheets.length > 1;
-    var fileNameCombination = isMultiSlice ? { budget: null, shift: null, dispense: null } : ((sheets[0] && sheets[0].combination) || { budget: null, shift: null, dispense: null });
-    var descriptor = opts.descriptor;
-    if (isMultiSlice) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-شرائح";
-    var fileName = buildFileName({ month: opts.month, reportId: opts.reportId, combination: fileNameCombination, descriptor: descriptor, ext: "xlsx" });
-    XLSX.writeFile(wb, fileName);
-    return fileName;
   }
 
   function exportZipPerSheet(sheets, opts) {
     var zip = new JSZip();
     var usedNames = [];
-    var zipName = buildFileName({ month: opts.month, reportId: opts.reportId, combination: { budget: null, shift: null, dispense: null }, descriptor: opts.descriptor, ext: "zip" });
+    var zipName = buildFileName({ month: opts.month, reportLabel: opts.reportLabel, combination: { budget: null, shift: null, dispense: null }, descriptor: opts.descriptor, ext: "zip" });
     var index = 0;
     if (opts.onProgress) opts.onProgress(0, sheets.length);
     return new Promise(function (resolve, reject) {
       function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) { reject(new Error("تم الإلغاء")); return; }
         if (index >= sheets.length) {
           zip.generateAsync({ type: "blob" }, function (meta) { if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent); }).then(function (blob) {
             downloadBlob(blob, zipName);
@@ -4953,9 +5138,9 @@ PH.exporter = (function () {
           var wb = XLSX.utils.book_new();
           wb.Workbook = { Views: [{ RTL: true }] };
           var ws = buildWorksheet(sheet.rows, sheet.columns);
-          XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, cfg.REPORTS_BY_ID[opts.reportId].label, []));
+          XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, []));
           var buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-          var name = buildFileName({ month: opts.month, reportId: opts.reportId, combination: sheet.combination, descriptor: opts.descriptor, ext: "xlsx" });
+          var name = buildFileName({ month: opts.month, reportLabel: sheet.name, combination: sheet.combination, descriptor: opts.descriptor, ext: "xlsx" });
           name = resolveCollision(name, usedNames);
           usedNames.push(name);
           zip.file(name, buf);
@@ -4990,7 +5175,7 @@ PH.exporter = (function () {
   function exportCsv(rows, columns, opts) {
     var csv = rowsToCsv(rows, columns, opts.separator);
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    var fileName = buildFileName({ month: opts.month, reportId: opts.reportId, combination: opts.combination, descriptor: opts.descriptor, ext: "csv" });
+    var fileName = buildFileName({ month: opts.month, reportLabel: opts.reportLabel || cfg.REPORTS_BY_ID[opts.reportId].label, combination: opts.combination, descriptor: opts.descriptor, ext: "csv" });
     downloadBlob(blob, fileName);
     return fileName;
   }
@@ -5031,6 +5216,7 @@ PH.selftest = (function () {
   var paginate = PH.paginate;
   var store = PH.store;
   var cfg = PH.config;
+  var exportPlan = PH.exportPlan;
 
   function makeResult() {
     return { pass: 0, fail: 0, failures: [] };
@@ -5403,6 +5589,113 @@ PH.selftest = (function () {
     return result;
   }
 
+  // PH.exportPlan is a pure function fed hand-built fixtures here, never the
+  // live store - see the note above runRegressionInvariants for why store
+  // singletons stay out of self-tests.
+  function runExportPlanInvariants() {
+    var result = makeResult();
+    if (!exportPlan) { check(result, false, "PH.exportPlan is not loaded"); return result; }
+
+    function mkRows(n, field) {
+      var out = [];
+      for (var i = 1; i <= n; i++) {
+        var r = { name: "item" + i, unit: "u" };
+        r[field] = BigInt(i * 100);
+        out.push(r);
+      }
+      return out;
+    }
+
+    // Embedded pagination must match PH.print's own carryForward/pageTotal
+    // formula exactly - same page boundaries, same chunk sums, same
+    // exclusion of isGrandTotal/isSubtotal rows from every total.
+    (function () {
+      var rows = mkRows(10, "value");
+      var entry = {
+        reportId: "movement", sliceKey: "s1", combination: { budget: "ب", shift: "ص", dispense: "د" },
+        rows: rows, columns: ["name", "unit", "value"], settings: { rowsPerPage: 4 },
+        reportLabel: "الحركة", printTotalField: "value"
+      };
+      var plan = { reports: ["movement"], sheetSplit: "per-slice", totals: { cumulative: "embedded", carryForward: true, grandTotal: true } };
+      var out = exportPlan.buildSheets(plan, { sheets: [entry] })[0].rows;
+
+      var pages = paginate.buildPagesFromBlocked(rows, 4);
+      var expectedPageTotals = [], carry = 0n;
+      pages.pages.forEach(function (page) {
+        var sum = page.rows.reduce(function (a, slot) { return slot.row && typeof slot.row.value === "bigint" ? a + slot.row.value : a; }, 0n);
+        expectedPageTotals.push(sum);
+        carry += sum;
+      });
+
+      var pageTotalRows = out.filter(function (r) { return typeof r.name === "string" && r.name.indexOf("إجمالي الصفحة") === 0; });
+      var carryRows = out.filter(function (r) { return r.name === "المنقول من الصفحة السابقة"; });
+      var grandRows = out.filter(function (r) { return r.name === "الإجمالي الكلي"; });
+      var dataRows = out.filter(function (r) { return /^item/.test(r.name); });
+
+      check(result, dataRows.length === 10, "embedded: all real rows preserved");
+      check(result, pageTotalRows.length === expectedPageTotals.length, "embedded: one total row per print page");
+      pageTotalRows.forEach(function (r, i) { check(result, r.value === expectedPageTotals[i], "embedded: page " + (i + 1) + " total matches print's own chunk sum"); });
+      check(result, carryRows.length === expectedPageTotals.length - 1, "embedded: one carry row between each pair of pages, none after the last");
+      check(result, grandRows.length === 1 && grandRows[0].value === carry, "embedded: grand total equals print's final carryForward");
+
+      var sumReal = dataRows.reduce(function (a, r) { return a + r.value; }, 0n);
+      check(result, sumReal === carry, "embedded: sum of real rows == grand total");
+      var sumPageTotals = pageTotalRows.reduce(function (a, r) { return a + r.value; }, 0n);
+      check(result, sumPageTotals === carry, "embedded: sum of page totals == grand total (carry rows excluded)");
+
+      var idxLastPage1Row = out.indexOf(dataRows[3]);
+      var idxCarry1 = out.indexOf(carryRows[0]);
+      var idxFirstPage2Row = out.indexOf(dataRows[4]);
+      check(result, idxLastPage1Row < idxCarry1 && idxCarry1 < idxFirstPage2Row, "embedded: carry-into-page-2 sits between page 1's last row and page 2's first row");
+    })();
+
+    // A report that already bakes its own grand-total row (groups,
+    // averagePrices, pages) must not get a second one appended.
+    (function () {
+      var rows = mkRows(3, "value");
+      var bakedTotal = rows.reduce(function (a, r) { return a + r.value; }, 0n);
+      rows.push({ group: "الإجمالي", value: bakedTotal, isGrandTotal: true });
+      var entry = { reportId: "groups", sliceKey: "s1", combination: {}, rows: rows, columns: ["group", "value"], settings: {}, reportLabel: "المجموعات", printTotalField: "value" };
+      var plan = { reports: ["groups"], sheetSplit: "per-slice", totals: { cumulative: "none", grandTotal: true } };
+      var out = exportPlan.buildSheets(plan, { sheets: [entry] })[0].rows;
+      check(result, out.length === rows.length, "no duplicate grand-total row when the report already bakes one in");
+      check(result, out.filter(function (r) { return r.isGrandTotal; }).length === 1, "exactly one isGrandTotal row survives");
+    })();
+
+    // Combined sheetSplit: dimension columns prepended, per-slice subtotals
+    // suppressed in favour of one overall total across every slice.
+    (function () {
+      var e1 = { reportId: "movement", sliceKey: "s1", combination: { budget: "مجاني", shift: "صباحي", dispense: "منفذ1" }, rows: mkRows(3, "value"), columns: ["name", "unit", "value"], settings: {}, reportLabel: "الحركة", printTotalField: "value" };
+      var e2 = { reportId: "movement", sliceKey: "s2", combination: { budget: "مساهمة", shift: "مسائي", dispense: "منفذ2" }, rows: mkRows(2, "value"), columns: ["name", "unit", "value"], settings: {}, reportLabel: "الحركة", printTotalField: "value" };
+      var plan = { reports: ["movement"], sheetSplit: "combined", totals: { cumulative: "none", grandTotal: true } };
+      var sheets = exportPlan.buildSheets(plan, { sheets: [e1, e2] });
+      check(result, sheets.length === 1, "combined split produces one sheet for two slices of the same report");
+      var s = sheets[0];
+      check(result, s.columns[0] === "budget" && s.columns[1] === "shift" && s.columns[2] === "dispense", "combined sheet prepends budget/shift/dispense columns");
+      check(result, s.rows.length === 6, "combined sheet: 5 real rows + 1 overall grand total, no per-slice duplicates");
+      var overall = s.rows[s.rows.length - 1];
+      var expectedOverall = (100n + 200n + 300n) + (100n + 200n);
+      check(result, overall.value === expectedOverall, "combined sheet's single grand total sums across every slice");
+    })();
+
+    // "column" cumulative mode must be byte-identical to calling
+    // PH.blocks.applyBlocks directly with the same options - exportPlan adds
+    // no arithmetic of its own for this mode, only column wiring.
+    (function () {
+      var rows = mkRows(6, "value");
+      var entry = { reportId: "yearlyInventory", sliceKey: "s1", combination: {}, rows: rows, columns: ["name", "unit", "value"], settings: { blockSize: null, cumulativeAgg: "sum" }, reportLabel: "الجرد", printTotalField: "value" };
+      var plan = { reports: ["yearlyInventory"], sheetSplit: "per-slice", totals: { cumulative: "column", basis: "running", grandTotal: false } };
+      var sheets = exportPlan.buildSheets(plan, { sheets: [entry] });
+      check(result, sheets[0].columns.indexOf("cumulative") !== -1, "column mode injects a cumulative column when the report doesn't already have one");
+      var expected = blk.applyBlocks(rows, { blockSize: null, cumulativeMode: "running", cumulativeAgg: "sum", showPartialBlockTotal: true, valueField: "value" });
+      var out = sheets[0].rows;
+      check(result, out.length === expected.length, "column mode row count matches applyBlocks");
+      for (var i = 0; i < out.length; i++) check(result, out[i].cumulative === expected[i].cumulative, "column mode cumulative[" + i + "] matches applyBlocks directly");
+    })();
+
+    return result;
+  }
+
   function runAllWithData(source, expected) {
     var suites = {
       blocks: runBlocksInvariants(),
@@ -5411,7 +5704,8 @@ PH.selftest = (function () {
       average: runAverageInvariants(source),
       movingAverage: runMovingAverageInvariants(),
       fill: runFillInvariants(),
-      regressions: runRegressionInvariants()
+      regressions: runRegressionInvariants(),
+      exportPlan: runExportPlanInvariants()
     };
     var totalPass = 0, totalFail = 0, allFailures = [];
     Object.keys(suites).forEach(function (k) {
@@ -5422,7 +5716,7 @@ PH.selftest = (function () {
     return Promise.resolve({ suites: suites, totalPass: totalPass, totalFail: totalFail, failures: allFailures });
   }
 
-  return { runAll: runAll, runBlocksInvariants: runBlocksInvariants, runPrintInvariants: runPrintInvariants, runAverageInvariants: runAverageInvariants, runMovingAverageInvariants: runMovingAverageInvariants, runRegressionInvariants: runRegressionInvariants, generateFixtureSource: generateFixtureSource };
+  return { runAll: runAll, runBlocksInvariants: runBlocksInvariants, runPrintInvariants: runPrintInvariants, runAverageInvariants: runAverageInvariants, runMovingAverageInvariants: runMovingAverageInvariants, runRegressionInvariants: runRegressionInvariants, runExportPlanInvariants: runExportPlanInvariants, generateFixtureSource: generateFixtureSource };
 })();
 
 
@@ -6098,9 +6392,6 @@ PH.app = (function () {
       toggleSettingsPanel(settingsBtn, toolbar);
     });
     toolbar.appendChild(settingsBtn);
-    var zipExportBtn = el("button", { class: "btn btn--tertiary", title: "تصدير كل الشرائح كملف مضغوط منفصل لكل شريحة" }, [text("تصدير الكل (ZIP)")]);
-    zipExportBtn.addEventListener("click", runZipExport);
-    toolbar.appendChild(zipExportBtn);
     container.appendChild(toolbar);
 
     var tableArea = el("div", { class: "card", id: "table-area" });
@@ -6192,7 +6483,7 @@ PH.app = (function () {
     });
     var actionList = [
       { label: "طباعة", hint: "Ctrl P", run: function () { openPrintPreview(); } },
-      { label: "تصدير Excel", hint: "Ctrl E", run: function () { runExport(); } },
+      { label: "تصدير Excel", hint: "Ctrl E", run: function () { openExportDialog(); } },
       { label: "إضافة صف", hint: "", run: function () { openGuidedFormOverlay(); } },
       { label: "استيراد ملف", hint: "", run: function () { var i = $("btn-import"); if (i) i.click(); } },
       { label: "تنزيل نموذج بيانات", hint: "", run: function () { downloadTemplate(); } },
@@ -6913,7 +7204,7 @@ PH.app = (function () {
         var rep = cfg.REPORTS.filter(function (r) { return r.shortcut === key; })[0];
         if (rep) { if (state.activeReportId !== rep.id) resetQueryState(); state.activeReportId = rep.id; render(); }
       } else if (ctrl && key === "p") { e.preventDefault(); openPrintPreview(); }
-      else if (ctrl && key === "e") { e.preventDefault(); runExport(); }
+      else if (ctrl && key === "e") { e.preventDefault(); openExportDialog(); }
       else if (ctrl && e.shiftKey && key === "t") { e.preventDefault(); runSelfTestOverlay(); }
     });
   }
@@ -7077,59 +7368,352 @@ PH.app = (function () {
     });
   }
 
-  function runExport() {
-    var sheet = computeActiveSheet();
-    var repDef = cfg.REPORTS_BY_ID[state.activeReportId];
-    var outputRows = outputRowsFor(sheet, repDef);
-    var monthValues = store.getSourceRows().map(function (r) { return r.month; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
-    var exportMonth = monthValues.length === 1 ? monthValues[0] : (monthValues.length ? "متعدد" : "غير-محدد");
-    var name = PH.exporter.exportSingleWorkbook(
-      [{ rows: outputRows, columns: cfg.printableColumns(repDef.columns), combination: state.activeCombination }],
-      { month: exportMonth, reportId: state.activeReportId }
-    );
-    showToast("تم تصدير " + name);
+  function exportPipelineRows(sheet, repDef, applyView) {
+    if (!applyView || !isViewFiltered()) return sheet.rows;
+    var textCols = repDef.columns.filter(function (c) { return !cfg.MONEY_COLUMNS[c] && c !== "pageNo" && c !== "printPageNo"; });
+    var pipeline = query.runPipeline(sheet.rows, state.queryState, textCols, columnTypesFor(repDef.columns));
+    return pipeline.sorted;
   }
 
-  function runZipExport() {
-    var reportId = state.activeReportId;
-    if (reportId === "pages") {
-      showToast("تقرير الصفحات يجمع كل الشرائح بالفعل — استخدم زر التصدير العادي.", false);
-      return;
-    }
-    var repDef = cfg.REPORTS_BY_ID[reportId];
+  function openExportDialog() {
+    if (document.querySelector('[role="dialog"]')) return;
     var rows = store.getSourceRows();
-    var combos = matrix.nonEmpty(matrix.materialize(rows, state.dimensionGroups));
-    if (combos.length < 2) {
-      showToast("لا توجد إلا شريحة واحدة لهذا التقرير.", false);
-      return;
-    }
-    var sheets = combos.map(function (m) {
-      var sheet = computeSheetFor(reportId, m.combination);
-      return { rows: sheet.rows, columns: cfg.printableColumns(repDef.columns), combination: m.combination };
-    });
     var monthValues = rows.map(function (r) { return r.month; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
     var exportMonth = monthValues.length === 1 ? monthValues[0] : (monthValues.length ? "متعدد" : "غير-محدد");
-    var progress = el("div", { class: "panel-2", role: "dialog", "aria-modal": "true", "aria-label": "تجهيز ملف ZIP", style: "position:fixed; inset-inline-start:50%; top:50%; transform:translate(-50%,-50%); z-index:90; width:320px;" }, [
-      el("div", { class: "fs-body" }, [text("جارٍ تجهيز ملف ZIP…")]),
-      el("div", { class: "progress-bar", style: "margin-top:var(--sp-3);" }, [el("div", { class: "progress-bar__fill", style: "width:0%;" })]),
-      el("div", { class: "fs-caption text-soft", style: "margin-top:var(--sp-2);" }, [text("0 / " + sheets.length)])
+    var combos = matrix.nonEmpty(matrix.materialize(rows, state.dimensionGroups));
+    var availableReports = cfg.REPORTS.slice().sort(function (a, b) { return a.order - b.order; }).filter(function (rep) {
+      return !(rows.length > 0 && rep.requiresOptional.some(function (col) { return !rows.some(function (r) { return r[col] !== undefined && r[col] !== null; }); }));
+    });
+
+    if (!availableReports.length || !combos.length) {
+      showToast("لا توجد بيانات لتصديرها بعد.", false);
+      return;
+    }
+
+    var comboMap = {};
+    combos.forEach(function (c) { comboMap[c.key] = c; });
+
+    var plan = {
+      reports: availableReports.some(function (r) { return r.id === state.activeReportId; }) ? [state.activeReportId] : [availableReports[0].id],
+      slices: combos.map(function (c) { return c.key; }),
+      layout: "one-workbook",
+      sheetSplit: "per-slice",
+      applyView: !!state.applyToPrintExport,
+      totals: { grandTotal: true, cumulative: "none", basis: "block", carryForward: true }
+    };
+
+    function reportById(id) { return cfg.REPORTS_BY_ID[id]; }
+    function onlyPages() { return plan.reports.length === 1 && plan.reports[0] === "pages"; }
+
+    function applySavedPlan(saved) {
+      if (!saved) return;
+      if (Array.isArray(saved.reports)) {
+        var validIds = availableReports.map(function (r) { return r.id; });
+        var filteredReports = saved.reports.filter(function (id) { return validIds.indexOf(id) !== -1; });
+        if (filteredReports.length) plan.reports = filteredReports;
+      }
+      if (Array.isArray(saved.slices)) {
+        var validKeys = combos.map(function (c) { return c.key; });
+        var filteredSlices = saved.slices.filter(function (k) { return validKeys.indexOf(k) !== -1; });
+        if (filteredSlices.length) plan.slices = filteredSlices;
+      }
+      if (saved.layout === "one-workbook" || saved.layout === "zip") plan.layout = saved.layout;
+      if (saved.sheetSplit === "per-slice" || saved.sheetSplit === "combined") plan.sheetSplit = saved.sheetSplit;
+      if (typeof saved.applyView === "boolean") plan.applyView = saved.applyView;
+      if (saved.totals) {
+        if (["none", "column", "embedded"].indexOf(saved.totals.cumulative) !== -1) plan.totals.cumulative = saved.totals.cumulative;
+        if (saved.totals.basis === "block" || saved.totals.basis === "running") plan.totals.basis = saved.totals.basis;
+        if (typeof saved.totals.grandTotal === "boolean") plan.totals.grandTotal = saved.totals.grandTotal;
+        if (typeof saved.totals.carryForward === "boolean") plan.totals.carryForward = saved.totals.carryForward;
+      }
+    }
+
+    function anyPrintTotal() {
+      return plan.reports.map(reportById).filter(Boolean).some(function (r) { return !!r.printTotalField; });
+    }
+
+    function sheetCountEstimate() {
+      var n = 0;
+      plan.reports.forEach(function (id) {
+        if (id === "pages") { n += 1; return; }
+        var sliceCount = plan.slices.length || 1;
+        n += (plan.sheetSplit === "combined" && sliceCount > 1) ? 1 : sliceCount;
+      });
+      return n;
+    }
+
+    function checklistRow(labelText, checked, onToggle, disabledReason) {
+      var row = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-body); cursor:" + (disabledReason ? "default" : "pointer") + "; opacity:" + (disabledReason ? "0.5" : "1") + ";" });
+      var cb = el("input", { type: "checkbox" });
+      cb.checked = checked;
+      if (disabledReason) cb.disabled = true;
+      cb.addEventListener("change", function () { onToggle(cb.checked); refresh(); });
+      row.appendChild(cb);
+      row.appendChild(el("span", {}, [text(labelText)]));
+      if (disabledReason) row.appendChild(el("span", { class: "fs-caption text-soft" }, [text("— " + disabledReason)]));
+      return row;
+    }
+
+    function radioRow(name, value, current, labelText, onPick) {
+      var row = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-body); cursor:pointer;" });
+      var rb = el("input", { type: "radio", name: name });
+      rb.checked = current === value;
+      rb.addEventListener("change", function () { if (rb.checked) { onPick(value); refresh(); } });
+      row.appendChild(rb);
+      row.appendChild(el("span", {}, [text(labelText)]));
+      return row;
+    }
+
+    function section(title) {
+      var wrap = el("div", { style: "display:flex; flex-direction:column; gap:var(--sp-2);" });
+      wrap.appendChild(el("div", { class: "fs-body", style: "font-weight:600;" }, [text(title)]));
+      return wrap;
+    }
+
+    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "تصدير", style: "position:fixed; inset:0; z-index:80; background:rgba(20,18,14,.32); display:flex; align-items:center; justify-content:center; padding:var(--sp-6);" });
+    var panel = el("div", { class: "panel-2", style: "width:min(760px, 100%); max-height:90vh; overflow:auto; display:flex; flex-direction:column; gap:var(--sp-4);" });
+    panel.appendChild(el("div", { class: "fs-title" }, [text("تصدير")]));
+    var body = el("div", { style: "display:flex; flex-direction:column; gap:var(--sp-4);" });
+    panel.appendChild(body);
+
+    var footer = el("div", { class: "row", style: "justify-content:space-between; align-items:center;" });
+    var footerSummary = el("div", { class: "fs-caption text-soft" });
+    var footerActions = el("div", { class: "row", style: "gap:var(--sp-2);" });
+    var exportBtn = el("button", { class: "btn btn--primary", type: "button" }, [text("تصدير")]);
+    var cancelBtn = el("button", { class: "btn btn--secondary", type: "button" }, [text("إلغاء")]);
+    footerActions.appendChild(exportBtn);
+    footerActions.appendChild(cancelBtn);
+    footer.appendChild(footerSummary);
+    footer.appendChild(footerActions);
+    panel.appendChild(footer);
+
+    var progressWrap = el("div", { style: "display:none; flex-direction:column; gap:var(--sp-3);" }, [
+      el("div", { class: "fs-body" }, [text("جارٍ التصدير…")]),
+      el("div", { class: "progress-bar" }, [el("div", { class: "progress-bar__fill", style: "width:0%;" })]),
+      el("div", { class: "fs-caption text-soft" }, [text("0 / 0")]),
+      el("button", { class: "btn btn--tertiary", type: "button" }, [text("إلغاء")])
     ]);
-    registerDialog(progress);
-    var fill = progress.querySelector(".progress-bar__fill");
-    var caption = progress.querySelector(".fs-caption");
-    PH.exporter.exportZipPerSheet(sheets, { month: exportMonth, reportId: reportId, onProgress: function (done, total, percent) {
-      var pct = percent !== undefined ? percent : (total ? done / total * 100 : 0);
-      fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-      caption.textContent = percent !== undefined && done === total ? "ضغط الملف…" : done + " / " + total;
-    } }).then(function (zipName) {
-      removeDialog(progress);
-      showToast("تم تصدير " + zipName);
-    }).catch(function (err) {
-      removeDialog(progress);
-      showToast("تعذّر تصدير ZIP: " + (err && err.message ? err.message : "خطأ غير معروف"), false);
+    panel.appendChild(progressWrap);
+    overlay.appendChild(panel);
+
+    function buildBody() {
+      body.innerHTML = "";
+      var includesPages = onlyPages();
+
+      var picker = el("div", { style: "display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-4);" });
+
+      var reportsSec = section("التقارير");
+      var reportsBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-2); padding:var(--sp-2);" });
+      availableReports.forEach(function (rep) {
+        var checked = plan.reports.indexOf(rep.id) !== -1;
+        reportsBox.appendChild(checklistRow(rep.label, checked, function (isChecked) {
+          if (isChecked) { if (plan.reports.indexOf(rep.id) === -1) plan.reports.push(rep.id); }
+          else { plan.reports = plan.reports.filter(function (id) { return id !== rep.id; }); }
+        }));
+      });
+      reportsSec.appendChild(reportsBox);
+      picker.appendChild(reportsSec);
+
+      var slicesSec = section("الشرائح");
+      var slicesBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-2); padding:var(--sp-2);" });
+      if (includesPages) {
+        slicesBox.appendChild(el("div", { class: "fs-caption text-soft" }, [text("تقرير الصفحات يجمع كل الشرائح بالفعل.")]));
+      } else {
+        combos.forEach(function (c) {
+          var label = cfg.DIMENSION_ORDER.map(function (d) { return reports.dimLabel(c.combination, d); }).join(" · ");
+          var checked = plan.slices.indexOf(c.key) !== -1;
+          slicesBox.appendChild(checklistRow(label + " (" + c.count + ")", checked, function (isChecked) {
+            if (isChecked) { if (plan.slices.indexOf(c.key) === -1) plan.slices.push(c.key); }
+            else { plan.slices = plan.slices.filter(function (k) { return k !== c.key; }); }
+          }));
+        });
+      }
+      slicesSec.appendChild(slicesBox);
+      picker.appendChild(slicesSec);
+      body.appendChild(picker);
+
+      var layoutSec = section("طريقة الحفظ");
+      var layoutRow = el("div", { class: "row", style: "gap:var(--sp-4);" });
+      layoutRow.appendChild(radioRow("layout", "one-workbook", plan.layout, "ملف Excel واحد", function (v) { plan.layout = v; }));
+      layoutRow.appendChild(radioRow("layout", "zip", plan.layout, "ملف ZIP — ورقة لكل شريحة", function (v) { plan.layout = v; }));
+      layoutSec.appendChild(layoutRow);
+
+      if (plan.layout === "one-workbook" && plan.slices.length > 1 && !includesPages) {
+        var splitRow = el("div", { class: "row", style: "gap:var(--sp-4);" });
+        splitRow.appendChild(radioRow("sheetSplit", "per-slice", plan.sheetSplit, "ورقة لكل شريحة", function (v) { plan.sheetSplit = v; }));
+        splitRow.appendChild(radioRow("sheetSplit", "combined", plan.sheetSplit, "ورقة واحدة مجمّعة", function (v) { plan.sheetSplit = v; }));
+        layoutSec.appendChild(splitRow);
+      }
+      body.appendChild(layoutSec);
+
+      var totalsSec = section("الإجماليات");
+      if (!anyPrintTotal()) {
+        totalsSec.appendChild(el("div", { class: "fs-caption text-soft" }, [text("لا يوجد عمود مالي في التقارير المحدَّدة.")]));
+      } else {
+        var grandRow = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; cursor:pointer;" });
+        var grandCb = el("input", { type: "checkbox" });
+        grandCb.checked = plan.totals.grandTotal;
+        grandCb.addEventListener("change", function () { plan.totals.grandTotal = grandCb.checked; });
+        grandRow.appendChild(grandCb);
+        grandRow.appendChild(el("span", {}, [text("إضافة صف الإجمالي الكلي")]));
+        totalsSec.appendChild(grandRow);
+
+        var cumWrap = el("div", { style: "display:flex; flex-direction:column; gap:4px;" });
+        [
+          ["none", "بدون", "بلا عمود تراكمي ولا صفوف إجمالي بين الصفحات"],
+          ["column", "في عمود", "عمود تراكمي إضافي يظهر في كل صف"],
+          ["embedded", "صفوف بين الصفحات", "صف إجمالي بعد كل صفحة، مع نقل اختياري للصفحة التالية"]
+        ].forEach(function (opt) {
+          var r = el("div", {});
+          r.appendChild(radioRow("cumulative", opt[0], plan.totals.cumulative, opt[1], function (v) { plan.totals.cumulative = v; }));
+          r.appendChild(el("div", { class: "fs-caption text-soft", style: "margin-inline-start:24px;" }, [text(opt[2])]));
+          cumWrap.appendChild(r);
+        });
+        totalsSec.appendChild(cumWrap);
+
+        if (plan.totals.cumulative === "column") {
+          var basisRow = el("div", { class: "row", style: "gap:var(--sp-4); margin-inline-start:24px;" });
+          basisRow.appendChild(radioRow("basis", "block", plan.totals.basis, "تراكمي داخل كل مجموعة", function (v) { plan.totals.basis = v; }));
+          basisRow.appendChild(radioRow("basis", "running", plan.totals.basis, "تراكمي مستمر", function (v) { plan.totals.basis = v; }));
+          totalsSec.appendChild(basisRow);
+        }
+
+        if (plan.totals.cumulative === "embedded") {
+          var carryRow = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; cursor:pointer; margin-inline-start:24px;" });
+          var carryCb = el("input", { type: "checkbox" });
+          carryCb.checked = plan.totals.carryForward;
+          carryCb.addEventListener("change", function () { plan.totals.carryForward = carryCb.checked; });
+          carryRow.appendChild(carryCb);
+          carryRow.appendChild(el("span", {}, [text('إظهار "المنقول من الصفحة السابقة"')]));
+          totalsSec.appendChild(carryRow);
+          var firstRepId = plan.reports[0];
+          var firstSettings = firstRepId ? resolveSettings(firstRepId, sheetKeyFor(firstRepId, matrix.allValuesCombination())) : null;
+          var rpp = (firstSettings && firstSettings.rowsPerPage) || 24;
+          totalsSec.appendChild(el("div", { class: "fs-caption text-soft", style: "margin-inline-start:24px;" }, [text("حجم الصفحة الحالي: " + rpp + " صفًا — يُغيَّر من إعدادات الصفحة")]));
+        }
+      }
+      body.appendChild(totalsSec);
+
+      if (isViewFiltered()) {
+        var viewRow = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; cursor:pointer;" });
+        var viewCb = el("input", { type: "checkbox" });
+        viewCb.checked = plan.applyView;
+        viewCb.addEventListener("change", function () { plan.applyView = viewCb.checked; });
+        viewRow.appendChild(viewCb);
+        viewRow.appendChild(el("span", {}, [text("تطبيق التصفية/الفرز/البحث الحالي")]));
+        body.appendChild(viewRow);
+      }
+    }
+
+    function refresh() {
+      buildBody();
+      var n = sheetCountEstimate();
+      footerSummary.textContent = plan.reports.length + " تقرير × حتى " + n + " ورقة";
+      exportBtn.disabled = !plan.reports.length || (!onlyPages() && !plan.slices.length);
+    }
+
+    function buildEntriesForExport() {
+      var entries = [];
+      var rawCombos = {};
+      plan.reports.forEach(function (reportId) {
+        var repDef = reportById(reportId);
+        if (!repDef) return;
+        if (reportId === "pages") {
+          var all = matrix.allValuesCombination();
+          var sheet = computeSheetFor("pages", all);
+          entries.push({
+            reportId: "pages", sliceKey: "*", combination: null,
+            rows: sheet.rows, columns: cfg.printableColumns(repDef.columns),
+            settings: resolveSettings("pages", sheetKeyFor("pages", all)),
+            reportLabel: repDef.label, printTotalField: repDef.printTotalField
+          });
+          rawCombos["pages|*"] = all;
+          return;
+        }
+        var chosenSlices = plan.slices.length ? plan.slices : combos.map(function (c) { return c.key; });
+        chosenSlices.forEach(function (key) {
+          var c = comboMap[key];
+          if (!c) return;
+          var sheet = computeSheetFor(reportId, c.combination);
+          var settings = resolveSettings(reportId, sheetKeyFor(reportId, c.combination));
+          var filtered = exportPipelineRows(sheet, repDef, plan.applyView);
+          var labelCombo = {
+            budget: reports.dimLabel(c.combination, "budget"),
+            shift: reports.dimLabel(c.combination, "shift"),
+            dispense: reports.dimLabel(c.combination, "dispense")
+          };
+          entries.push({
+            reportId: reportId, sliceKey: key, combination: labelCombo,
+            rows: filtered, columns: cfg.printableColumns(repDef.columns),
+            settings: settings, reportLabel: repDef.label, printTotalField: repDef.printTotalField
+          });
+          rawCombos[reportId + "|" + key] = c.combination;
+        });
+      });
+      return { entries: entries, rawCombos: rawCombos };
+    }
+
+    function doExport() {
+      var built = buildEntriesForExport();
+      if (!built.entries.length) { showToast("لا توجد بيانات في التحديد الحالي.", false); return; }
+      var sheets;
+      try {
+        sheets = PH.exportPlan.buildSheets(plan, { sheets: built.entries });
+      } catch (err) {
+        showToast("تعذّر بناء التقرير: " + (err && err.message ? err.message : "خطأ غير معروف"), false);
+        return;
+      }
+      if (!sheets.length) { showToast("لا توجد بيانات في التحديد الحالي.", false); return; }
+
+      sheets.forEach(function (s) {
+        if (s.meta.combined) { s.combination = { budget: null, shift: null, dispense: null }; return; }
+        var key = s.meta.reportId + "|" + s.meta.sliceKey;
+        s.combination = built.rawCombos[key] || { budget: null, shift: null, dispense: null };
+      });
+
+      var reportLabelForFile = plan.reports.length === 1 ? reportById(plan.reports[0]).label : (plan.reports.length + "-تقارير");
+      var abortToken = { cancelled: false };
+
+      body.style.display = "none";
+      footer.style.display = "none";
+      progressWrap.style.display = "flex";
+      var fill = progressWrap.querySelector(".progress-bar__fill");
+      var caption = progressWrap.querySelector(".fs-caption");
+      var cancelProgressBtn = progressWrap.querySelector("button");
+      cancelProgressBtn.addEventListener("click", function () { abortToken.cancelled = true; });
+
+      var writer = plan.layout === "zip" ? PH.exporter.exportZipPerSheet : PH.exporter.exportSingleWorkbook;
+      writer(sheets, {
+        month: exportMonth, reportLabel: reportLabelForFile, abortToken: abortToken,
+        onProgress: function (done, total, percent) {
+          var pct = percent !== undefined ? percent : (total ? done / total * 100 : 0);
+          fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+          caption.textContent = percent !== undefined && done === total ? "ضغط الملف…" : done + " / " + total;
+        }
+      }).then(function (name) {
+        store.saveSettings("meta", "exportPlan", plan).catch(function () {});
+        removeDialog(overlay);
+        showToast("تم تصدير " + name);
+      }).catch(function (err) {
+        body.style.display = "";
+        footer.style.display = "";
+        progressWrap.style.display = "none";
+        showToast("تعذّر التصدير: " + (err && err.message ? err.message : "خطأ غير معروف"), false);
+      });
+    }
+
+    cancelBtn.addEventListener("click", function () { removeDialog(overlay); });
+    exportBtn.addEventListener("click", doExport);
+
+    store.loadSettings("meta").then(function (meta) {
+      applySavedPlan(meta.exportPlan);
+      registerDialog(overlay);
+      refresh();
+    }).catch(function () {
+      registerDialog(overlay);
+      refresh();
     });
   }
-
   function runSelfTestOverlay() {
     var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "الفحص الذاتي", style: "position:fixed; inset:0; background:var(--paper); z-index:100; padding:var(--sp-6); overflow:auto;" });
     overlay.appendChild(el("div", { class: "fs-title" }, [text("فحص ذاتي — جارٍ التشغيل…")]));
