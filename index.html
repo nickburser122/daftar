@@ -1460,6 +1460,12 @@ PH.config = (function () {
     return columns.filter(function (c) { return !VIRTUAL_COLUMNS[c]; });
   }
 
+  function withoutHiddenColumns(columns, hidden) {
+    if (!hidden || !hidden.length) return columns;
+    var filtered = columns.filter(function (c) { return VIRTUAL_COLUMNS[c] || hidden.indexOf(c) === -1; });
+    return filtered.length ? filtered : columns;
+  }
+
   var COLUMN_DECIMALS = {
     value: 4, cumulative: 4, price: 4, priceMin: 4, priceMax: 4,
     priceAvg: 4, movingAvg: 4, valueOut: 4,
@@ -1493,7 +1499,8 @@ PH.config = (function () {
     MAX_SAFE_SCALED: MAX_SAFE_SCALED,
     BRASS_COLUMNS: BRASS_COLUMNS,
     VIRTUAL_COLUMNS: VIRTUAL_COLUMNS,
-    printableColumns: printableColumns
+    printableColumns: printableColumns,
+    withoutHiddenColumns: withoutHiddenColumns
   };
 })();
 
@@ -1859,11 +1866,14 @@ PH.store = (function () {
 
   function getAllSettingsScopes() {
     return getAll(STORES.settings).then(function (entries) {
-      var out = { global: {}, report: {}, sheet: {}, linked: {} };
+      var out = { global: {}, report: {}, sheet: {}, linked: {}, hiddenColumns: {} };
       entries.forEach(function (e) {
         if (!e || typeof e.key !== "string") return;
         if (e.key === "global") out.global = e.value || {};
-        else if (e.key === "meta") out.linked = (e.value && e.value.linked) || {};
+        else if (e.key === "meta") {
+          out.linked = (e.value && e.value.linked) || {};
+          out.hiddenColumns = (e.value && e.value.hiddenColumns) || {};
+        }
         else if (e.key.indexOf("report:") === 0) out.report[e.key.slice(7)] = e.value || {};
         else if (e.key.indexOf("sheet:") === 0) out.sheet[e.key.slice(6)] = e.value || {};
       });
@@ -5639,6 +5649,53 @@ PH.selftest = (function () {
     return result;
   }
 
+  // Column visibility is a pure display-layer filter on the columns array -
+  // it must never be able to touch rows or computed totals. Prove that by
+  // running the same fixture through the real report-computation layer
+  // twice, with cfg.withoutHiddenColumns called on the column list in
+  // between, and asserting the computed rows/grandTotal are unaffected.
+  function runColumnChooserInvariants() {
+    var result = makeResult();
+    if (!cfg.withoutHiddenColumns) { check(result, false, "PH.config.withoutHiddenColumns is not loaded"); return result; }
+
+    var columns = ["name", "unit", "price", "value", "cumulative"];
+    check(result, cfg.withoutHiddenColumns(columns, []).length === columns.length, "no hidden columns -> full list returned");
+    check(result, cfg.withoutHiddenColumns(columns, null).length === columns.length, "null hidden set -> full list returned");
+
+    var oneHidden = cfg.withoutHiddenColumns(columns, ["price"]);
+    check(result, oneHidden.indexOf("price") === -1 && oneHidden.length === columns.length - 1, "hiding one column removes exactly that column");
+
+    var allButOne = columns.slice(1);
+    var hideAll = cfg.withoutHiddenColumns(columns, allButOne.concat(["name"]));
+    check(result, hideAll.length === columns.length, "hiding every column falls back to the full list rather than returning empty");
+
+    var virtualColumns = ["name", "id", "actions", "value"];
+    var hideVirtual = cfg.withoutHiddenColumns(virtualColumns, ["id", "actions", "name"]);
+    check(result, hideVirtual.indexOf("id") !== -1 && hideVirtual.indexOf("actions") !== -1, "id/actions survive even if named in the hidden set");
+    check(result, hideVirtual.indexOf("name") === -1, "a real column in the same hidden set is still removed");
+
+    check(result, columns.length === 5 && columns[2] === "price", "withoutHiddenColumns does not mutate its input columns array");
+
+    if (reports && cfg.REPORTS_BY_ID.groups) {
+      var rows = [
+        { name: "أ", unit: "علبة", group: "مجموعة1", price: 10, dispensed: 5, book: "1", month: "2026-01" },
+        { name: "ب", unit: "علبة", group: "مجموعة1", price: 20, dispensed: 3, book: "1", month: "2026-01" },
+        { name: "ج", unit: "علبة", group: "مجموعة2", price: 15, dispensed: 2, book: "1", month: "2026-01" }
+      ];
+      var settings = { blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum" };
+      var before = reports.computeGroups(rows.slice(), settings);
+      cfg.withoutHiddenColumns(cfg.REPORTS_BY_ID.groups.columns, ["group"]);
+      cfg.withoutHiddenColumns(cfg.REPORTS_BY_ID.groups.columns, ["value"]);
+      var after = reports.computeGroups(rows.slice(), settings);
+      check(result, JSON.stringify(before.rows, function (k, v) { return typeof v === "bigint" ? v.toString() + "n" : v; }) ===
+        JSON.stringify(after.rows, function (k, v) { return typeof v === "bigint" ? v.toString() + "n" : v; }),
+        "computed rows are bit-identical regardless of intervening column-visibility calls");
+      check(result, before.grandTotal === after.grandTotal, "grandTotal is bit-identical regardless of intervening column-visibility calls");
+    }
+
+    return result;
+  }
+
   // PH.exportPlan is a pure function fed hand-built fixtures here, never the
   // live store - see the note above runRegressionInvariants for why store
   // singletons stay out of self-tests.
@@ -5755,7 +5812,8 @@ PH.selftest = (function () {
       movingAverage: runMovingAverageInvariants(),
       fill: runFillInvariants(),
       regressions: runRegressionInvariants(),
-      exportPlan: runExportPlanInvariants()
+      exportPlan: runExportPlanInvariants(),
+      columns: runColumnChooserInvariants()
     };
     var totalPass = 0, totalFail = 0, allFailures = [];
     Object.keys(suites).forEach(function (k) {
@@ -5766,7 +5824,7 @@ PH.selftest = (function () {
     return Promise.resolve({ suites: suites, totalPass: totalPass, totalFail: totalFail, failures: allFailures });
   }
 
-  return { runAll: runAll, runBlocksInvariants: runBlocksInvariants, runPrintInvariants: runPrintInvariants, runAverageInvariants: runAverageInvariants, runMovingAverageInvariants: runMovingAverageInvariants, runRegressionInvariants: runRegressionInvariants, runExportPlanInvariants: runExportPlanInvariants, generateFixtureSource: generateFixtureSource };
+  return { runAll: runAll, runBlocksInvariants: runBlocksInvariants, runPrintInvariants: runPrintInvariants, runAverageInvariants: runAverageInvariants, runMovingAverageInvariants: runMovingAverageInvariants, runRegressionInvariants: runRegressionInvariants, runExportPlanInvariants: runExportPlanInvariants, runColumnChooserInvariants: runColumnChooserInvariants, generateFixtureSource: generateFixtureSource };
 })();
 
 
@@ -5795,7 +5853,8 @@ PH.app = (function () {
       view: "empty",
       pendingImport: null,
       sourceRowFilterIds: null,
-      applyToPrintExport: true
+      applyToPrintExport: true,
+      hiddenColumns: {}
   };
 
   function resetQueryState() {
@@ -6157,6 +6216,44 @@ PH.app = (function () {
         body.appendChild(advSec);
       }
 
+      var printable = cfg.printableColumns(repDef.columns);
+      if (printable.length > 1) {
+        var colsSec = drawerSection("الأعمدة");
+        var hidden = state.hiddenColumns[reportId] || [];
+        var visibleCount = printable.length - hidden.length;
+        var colsHost = el("div", { style: "display:flex; flex-direction:column; gap:4px;" });
+        printable.forEach(function (c) {
+          var isHidden = hidden.indexOf(c) !== -1;
+          var row = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-caption); cursor:pointer;" });
+          var cb = el("input", { type: "checkbox" });
+          cb.checked = !isHidden;
+          if (!isHidden && visibleCount <= 1) cb.disabled = true;
+          cb.addEventListener("change", function () {
+            var next = (state.hiddenColumns[reportId] || []).slice();
+            if (cb.checked) next = next.filter(function (x) { return x !== c; });
+            else if (next.indexOf(c) === -1) next.push(c);
+            if (next.length >= printable.length) { showToast("لا يمكن إخفاء كل الأعمدة", false); cb.checked = true; return; }
+            state.hiddenColumns[reportId] = next;
+            store.saveSettings("meta", "hiddenColumns", state.hiddenColumns).catch(function () {});
+            onSettingsMutated();
+          });
+          row.appendChild(cb);
+          row.appendChild(el("span", {}, [text(cfg.COLUMN_LABELS[c] || c)]));
+          colsHost.appendChild(row);
+        });
+        colsSec.appendChild(colsHost);
+        if (hidden.length) {
+          var showAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("إظهار كل الأعمدة")]);
+          showAllBtn.addEventListener("click", function () {
+            delete state.hiddenColumns[reportId];
+            store.saveSettings("meta", "hiddenColumns", state.hiddenColumns).catch(function () {});
+            onSettingsMutated();
+          });
+          colsSec.appendChild(showAllBtn);
+        }
+        body.appendChild(colsSec);
+      }
+
       var scopeSec = drawerSection("النطاق");
       cfg.DIMENSION_ORDER.forEach(function (dim) { scopeSec.appendChild(dimensionMergeBlock(dim)); });
       body.appendChild(scopeSec);
@@ -6427,6 +6524,10 @@ PH.app = (function () {
   var tableControllerKey = null;
   var tableControllerContainer = null;
 
+  function visibleColumnsFor(reportId, columns) {
+    return cfg.withoutHiddenColumns(columns, state.hiddenColumns[reportId]);
+  }
+
   function columnTypesFor(columns) {
     var types = {};
     columns.forEach(function (c) {
@@ -6586,6 +6687,7 @@ PH.app = (function () {
     }
     var sheet = computeActiveSheet();
     var repDef = cfg.REPORTS_BY_ID[state.activeReportId];
+    var tableColumns = visibleColumnsFor(repDef.id, repDef.columns);
 
     if (repDef.id === "pages" && sheet.rows.length === 0 && store.getSourceRows().length > 0) {
       var movementSettingsForPages = resolveSettings("movement", sheetKeyFor("movement", state.activeCombination));
@@ -6644,7 +6746,7 @@ PH.app = (function () {
     var newKey = state.activeReportId + "|" + matrix.combinationKey(state.activeCombination) +
       "|month=" + (state.activeMonth || "*") +
       "|filterIds=" + (state.sourceRowFilterIds ? state.sourceRowFilterIds.join(",") : "*") +
-      "|cols=" + repDef.columns.join(",");
+      "|cols=" + tableColumns.join(",");
     if (tableController && tableControllerKey === newKey && tableControllerContainer === container) {
       tableController.setRows(displayRows, { filterRows: sheet.rows, scopeRowIds: scopeRowIds });
       return;
@@ -6654,7 +6756,7 @@ PH.app = (function () {
     tableControllerKey = newKey;
     tableControllerContainer = container;
     tableController = PH.viewTable.createTable(container, {
-      columns: repDef.columns,
+      columns: tableColumns,
       filterRows: sheet.rows,
       fillableColumns: validate.FILL_PRONE_TEXT_FIELDS,
       quantityColumns: ["dispensed", "received", "balance"],
@@ -7266,7 +7368,7 @@ PH.app = (function () {
     var repDef = cfg.REPORTS_BY_ID[state.activeReportId];
     var settings = resolveSettings(state.activeReportId, sheetKeyFor(state.activeReportId, state.activeCombination));
     var outputRows = outputRowsFor(sheet, repDef);
-    var printColumns = cfg.printableColumns(repDef.columns);
+    var printColumns = visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns));
     // A "(مصفّى)" stamp is a provenance claim on a document people sign - it
     // must reflect only filter/search, never a sort (which still triggers
     // outputRowsFor's re-blocking above, just doesn't earn the stamp).
@@ -7637,7 +7739,7 @@ PH.app = (function () {
           var sheet = computeSheetFor("pages", all);
           entries.push({
             reportId: "pages", sliceKey: "*", combination: null,
-            rows: sheet.rows, columns: cfg.printableColumns(repDef.columns),
+            rows: sheet.rows, columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
             settings: resolveSettings("pages", sheetKeyFor("pages", all)),
             reportLabel: repDef.label, printTotalField: repDef.printTotalField
           });
@@ -7658,7 +7760,7 @@ PH.app = (function () {
           };
           entries.push({
             reportId: reportId, sliceKey: key, combination: labelCombo,
-            rows: filtered, columns: cfg.printableColumns(repDef.columns),
+            rows: filtered, columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
             settings: settings, reportLabel: repDef.label, printTotalField: repDef.printTotalField
           });
           rawCombos[reportId + "|" + key] = c.combination;
@@ -7755,6 +7857,7 @@ PH.app = (function () {
       state.settingsOverrides.global = scopes.global;
       state.settingsOverrides.report = scopes.report;
       state.settingsOverrides.linked = scopes.linked;
+      state.hiddenColumns = scopes.hiddenColumns || {};
       migrateSheetScopeSettings(scopes.sheet);
       render();
     }).catch(function () {
@@ -7823,7 +7926,8 @@ PH.app = (function () {
       settingsOverrides: state.settingsOverrides,
       activeMonth: state.activeMonth,
       activeReportId: state.activeReportId,
-      dimensionGroups: state.dimensionGroups
+      dimensionGroups: state.dimensionGroups,
+      hiddenColumns: state.hiddenColumns
     };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
     PH.exporter.downloadBlob(blob, "daftar-workspace-backup.json");
@@ -7865,6 +7969,18 @@ PH.app = (function () {
         if (payload.activeMonth !== undefined) state.activeMonth = payload.activeMonth;
         if (payload.activeReportId && cfg.REPORTS_BY_ID[payload.activeReportId]) state.activeReportId = payload.activeReportId;
         if (payload.dimensionGroups) state.dimensionGroups = payload.dimensionGroups;
+        if (payload.hiddenColumns) {
+          var sanitizedHidden = {};
+          Object.keys(payload.hiddenColumns).forEach(function (rid) {
+            var repDef = cfg.REPORTS_BY_ID[rid];
+            if (!repDef) return;
+            var legal = cfg.printableColumns(repDef.columns);
+            var list = (payload.hiddenColumns[rid] || []).filter(function (c) { return legal.indexOf(c) !== -1; });
+            if (list.length && list.length < legal.length) sanitizedHidden[rid] = list;
+          });
+          state.hiddenColumns = sanitizedHidden;
+          store.saveSettings("meta", "hiddenColumns", sanitizedHidden).catch(function () {});
+        }
         render();
         showToast("تمت استعادة النسخة الاحتياطية");
       } catch (err) {
