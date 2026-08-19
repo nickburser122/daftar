@@ -960,6 +960,55 @@ table.grid { table-layout: fixed; }
 
 .progress-bar__fill { height: 100%; background: var(--ink); transition: width var(--motion-panel); }
 
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 18, 14, .32);
+  z-index: 90;
+}
+
+.drawer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 340px;
+  max-width: 100%;
+  background: var(--paper);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  animation: drawer-slide-in var(--motion-panel);
+}
+
+@keyframes drawer-slide-in {
+  from { inset-inline-end: -340px; }
+  to { inset-inline-end: 0; }
+}
+
+.drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.drawer__body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--sp-4) var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.drawer__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
 
 @media print {
   @page { size: A4 portrait; margin: 0; }
@@ -1145,16 +1194,17 @@ table.grid { table-layout: fixed; }
     <div class="title-bar__name">دفتر</div>
     <div class="title-bar__spacer"></div>
     <button class="btn btn--ghost btn--palette-trigger" id="btn-palette-trigger" type="button">
-      <span>بحث عن أي شيء…</span><kbd>Ctrl K</kbd>
+      <span>بحث أو أمر…</span><kbd>Ctrl K</kbd>
     </button>
     <div class="row" id="toolbar-actions">
-      <button class="btn btn--secondary" id="btn-import">استيراد</button>
       <button class="btn btn--primary" id="btn-print">طباعة</button>
-      <button class="btn btn--secondary" id="btn-export">تصدير</button>
-      <button class="btn btn--secondary" id="btn-add">إضافة</button>
+      <button class="btn btn--ghost btn--icon" id="btn-settings-drawer" type="button" title="الإعدادات (Ctrl+,)">⚙</button>
       <div class="overflow-wrap">
         <button class="btn btn--ghost btn--icon" id="btn-overflow-toggle" aria-haspopup="true" aria-expanded="false" aria-controls="overflow-menu" title="المزيد">⋯</button>
         <div class="overflow-menu" id="overflow-menu" role="menu" hidden>
+          <button role="menuitem" id="btn-import" title="استيراد ملف Excel أو CSV">استيراد</button>
+          <button role="menuitem" id="btn-export" title="تصدير (Ctrl+E)">تصدير</button>
+          <button role="menuitem" id="btn-add" title="إضافة صف يدويًا">إضافة</button>
           <button role="menuitem" id="btn-template" title="تحميل نموذج بيانات فارغ مع دليل الأعمدة">⭳ نموذج</button>
           <button role="menuitem" id="btn-backup" title="حفظ نسخة كاملة من البيانات والإعدادات">نسخة احتياطية</button>
           <button role="menuitem" id="btn-restore" title="استعادة نسخة كاملة من البيانات والإعدادات">استعادة</button>
@@ -5916,39 +5966,70 @@ PH.app = (function () {
     return row;
   }
 
-  function toggleSettingsPanel(anchorEl, containerEl) {
-    var existing = containerEl.querySelector(".settings-panel-open");
-    if (existing) { existing.remove(); return; }
+  function checkPrintGeometry(rowsPerPage) {
+    var base = { rowsPerPage: rowsPerPage };
+    var portrait = PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "portrait" }));
+    if (!portrait.ok) return portrait;
+    return PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "landscape" }));
+  }
 
+  function drawerSection(titleText) {
+    var sec = el("div", { class: "drawer__section" });
+    if (titleText) sec.appendChild(el("div", { class: "fs-body", style: "font-weight:600;" }, [text(titleText)]));
+    return sec;
+  }
+
+  function switchRow(labelText, checked, onToggle) {
+    var sw = el("div", { class: "switch", role: "switch", tabindex: "0", "aria-checked": checked ? "true" : "false" }, [
+      el("span", { class: "switch__track" }), el("span", {}, [text(labelText)])
+    ]);
+    sw.addEventListener("click", function () { onToggle(!checked); });
+    return sw;
+  }
+
+  function openSettingsDrawer() {
+    if (document.querySelector(".drawer-overlay")) return;
+    if (!store.getSourceRows().length) return;
     var reportId = state.activeReportId;
     var combination = state.activeCombination;
     var repDef = cfg.REPORTS_BY_ID[reportId];
+    if (!repDef) return;
     var sheetKey = sheetKeyFor(reportId, combination);
     var supportsBlocking = repDef.defaults.blockSize !== null;
 
-    var panel = el("div", { class: "panel-2 settings-panel-open", style: "position:absolute; z-index:30; width:300px; display:flex; flex-direction:column; gap:var(--sp-3); top:44px; inset-inline-end:8px;" });
-    panel.addEventListener("click", function (e) { e.stopPropagation(); });
+    var overlay = el("div", { class: "drawer-overlay", role: "dialog", "aria-modal": "true", "aria-label": "الإعدادات" });
+    var drawer = el("div", { class: "drawer" });
+    overlay.appendChild(drawer);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) removeDialog(overlay); });
 
-    function reopen() {
-      var reopened = document.getElementById("btn-sheet-settings");
-      if (reopened) toggleSettingsPanel(reopened, reopened.parentElement);
+    var header = el("div", { class: "drawer__header" }, [el("div", { class: "fs-title" }, [text("الإعدادات")])]);
+    var closeBtn = el("button", { class: "btn btn--ghost btn--icon", type: "button", "aria-label": "إغلاق" }, [text("✕")]);
+    closeBtn.addEventListener("click", function () { removeDialog(overlay); });
+    header.appendChild(closeBtn);
+    drawer.appendChild(header);
+
+    var body = el("div", { class: "drawer__body" });
+    drawer.appendChild(body);
+
+    function onSettingsMutated() {
+      var tableArea = $("table-area");
+      if (tableArea) renderTableArea(tableArea);
+      buildBody();
     }
 
-    function checkPrintGeometry(rowsPerPage) {
-      var base = { rowsPerPage: rowsPerPage };
-      var portrait = PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "portrait" }));
-      if (!portrait.ok) return portrait;
-      return PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "landscape" }));
+    function onScopeMutated() {
+      render();
+      buildBody();
     }
 
-    function onChange(field, value) {
+    function onSettingChange(field, value) {
+      if (field === "rowsPerPage") {
+        var geoCheck = checkPrintGeometry(value);
+        if (!geoCheck.ok) { showToast("عدد الصفوف هذا كبير جدًا ليُطبع بوضوح على الصفحة", false); return; }
+      }
       var settings = resolveSettings(reportId, sheetKey);
       var fields;
       if (field === "rowsPerPage" || field === "blockSize") {
-        if (field === "rowsPerPage") {
-          var geoCheck = checkPrintGeometry(value);
-          if (!geoCheck.ok) { showToast("عدد الصفوف هذا كبير جدًا ليُطبع بوضوح على الصفحة", false); return; }
-        }
         var next = PH.settings.applyLinkedChange(settings, field, value);
         fields = { rowsPerPage: next.rowsPerPage };
         if (supportsBlocking && next.blockSize !== null && next.blockSize !== undefined) fields.blockSize = next.blockSize;
@@ -5957,112 +6038,153 @@ PH.app = (function () {
         fields[field] = value;
       }
       applySettingChange("report", reportId, fields);
-      render();
-      reopen();
+      onSettingsMutated();
     }
 
-    function onApplyToAllReports() {
-      var settings = resolveSettings(reportId, sheetKey);
-      applyRowsPerPageToAllReports(settings.rowsPerPage).then(function () {
-        render();
-        showToast("تم تطبيق عدد الصفوف على كل التقارير");
-        reopen();
+    function dimensionMergeBlock(dim) {
+      var wrap = el("div", { style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-block:var(--sp-2); border-top:1px solid var(--line);" });
+      wrap.appendChild(el("div", { class: "fs-caption", style: "font-weight:600;" }, [text(cfg.DIMENSION_LABELS[dim])]));
+
+      var partition = matrix.resolvePartition(dim, state.dimensionGroups);
+      var fullyMerged = matrix.isFullyMerged(dim, state.dimensionGroups);
+      var selected = {};
+
+      var checkHost = el("div", { style: "display:flex; flex-direction:column; gap:4px;" });
+      cfg.DIMENSIONS[dim].forEach(function (val) {
+        var row = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-caption); cursor:pointer;" });
+        var cb = el("input", { type: "checkbox" });
+        cb.addEventListener("change", function () { if (cb.checked) selected[val] = true; else delete selected[val]; });
+        row.appendChild(cb);
+        row.appendChild(el("span", {}, [text(val)]));
+        checkHost.appendChild(row);
       });
+      wrap.appendChild(checkHost);
+
+      function applyPartition(next) {
+        state.dimensionGroups[dim] = next;
+        resetQueryState();
+        state.activeCombination[dim] = cfg.DIMENSIONS[dim].slice();
+        onScopeMutated();
+      }
+
+      var mergeRow = el("div", { class: "row", style: "gap:var(--sp-2); flex-wrap:wrap;" });
+      var mergeBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("دمج المحدد")]);
+      mergeBtn.addEventListener("click", function () {
+        var chosen = Object.keys(selected);
+        if (chosen.length < 2) { showToast("اختر قيمتين على الأقل للدمج", false); return; }
+        var remaining = partition.filter(function (g) { return !g.some(function (v) { return chosen.indexOf(v) !== -1; }); });
+        applyPartition(remaining.concat([chosen]));
+      });
+      mergeRow.appendChild(mergeBtn);
+
+      var mergeAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text(fullyMerged ? "✓ الكل مدموج" : "دمج الكل")]);
+      mergeAllBtn.disabled = fullyMerged;
+      mergeAllBtn.addEventListener("click", function () { applyPartition([cfg.DIMENSIONS[dim].slice()]); });
+      mergeRow.appendChild(mergeAllBtn);
+
+      var splitAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("فصل الكل")]);
+      splitAllBtn.disabled = matrix.isDefaultPartition(dim, state.dimensionGroups);
+      splitAllBtn.addEventListener("click", function () { applyPartition(null); });
+      mergeRow.appendChild(splitAllBtn);
+      wrap.appendChild(mergeRow);
+
+      var mergedGroups = partition.filter(function (g) { return g.length > 1; });
+      if (mergedGroups.length) {
+        wrap.appendChild(el("div", { class: "fs-caption text-soft" }, [text("المجموعات الحالية:")]));
+        mergedGroups.forEach(function (g) {
+          var row = el("div", { class: "row", style: "justify-content:space-between; align-items:center;" });
+          row.appendChild(el("span", { class: "fs-caption" }, [text(g.join(" + "))]));
+          var splitBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("فصل")]);
+          splitBtn.addEventListener("click", function () {
+            var remaining = partition.filter(function (other) { return other !== g; });
+            var split = g.map(function (v) { return [v]; });
+            var nextPartition = remaining.concat(split);
+            applyPartition(nextPartition.length === cfg.DIMENSIONS[dim].length ? null : nextPartition);
+          });
+          row.appendChild(splitBtn);
+          wrap.appendChild(row);
+        });
+      }
+
+      return wrap;
     }
 
-    function refreshPanel() {
-      panel.innerHTML = "";
+    function buildBody() {
+      body.innerHTML = "";
       var settings = resolveSettings(reportId, sheetKey);
 
-      panel.appendChild(el("div", { class: "fs-body", style: "font-weight:600;" }, [text("إعدادات — " + repDef.label)]));
+      var pageSec = drawerSection("إعدادات الصفحة — " + repDef.label);
       if (state.settingsOverrides.report[reportId] && Object.keys(state.settingsOverrides.report[reportId]).length) {
-        panel.appendChild(el("div", { class: "fs-caption", style: "color:var(--brass);" }, [text("هذا التقرير يتجاوز الإعدادات العامة.")]));
+        pageSec.appendChild(el("div", { class: "fs-caption", style: "color:var(--brass);" }, [text("هذا التقرير يتجاوز الإعدادات العامة.")]));
       }
-
-      panel.appendChild(fieldWrap("عدد الصفوف في الصفحة", presetRow(cfg.ROWS_PER_PAGE_PRESETS, settings.rowsPerPage, function (v) { onChange("rowsPerPage", v); })));
-
+      pageSec.appendChild(fieldWrap("عدد الصفوف في الصفحة", presetRow(cfg.ROWS_PER_PAGE_PRESETS, settings.rowsPerPage, function (v) { onSettingChange("rowsPerPage", v); })));
       if (repDef.printTotalField) {
-        var markerSwitch = el("div", { class: "switch", role: "switch", tabindex: "0", "aria-checked": settings.showPageMarkers !== false ? "true" : "false" }, [
-          el("span", { class: "switch__track" }), el("span", {}, [text("إظهار حدود الصفحات في الجدول")])
-        ]);
-        markerSwitch.addEventListener("click", function () { onChange("showPageMarkers", settings.showPageMarkers === false); });
-        panel.appendChild(markerSwitch);
+        pageSec.appendChild(switchRow("إظهار حدود الصفحات في الجدول", settings.showPageMarkers !== false, function (v) { onSettingChange("showPageMarkers", v); }));
       }
+      var pageCount = PH.settings.estimatedPageCount(computeSheetFor(reportId, combination).rows.length, settings.rowsPerPage);
+      pageSec.appendChild(el("div", { class: "fs-caption text-soft" }, [text("~" + pageCount + " صفحة عند الطباعة")]));
+      body.appendChild(pageSec);
 
       if (supportsBlocking) {
-        var advancedOpen = state.settingsPanelAdvancedOpen === true;
-        var advancedBtn = el("button", { class: "btn btn--tertiary", type: "button", style: "align-self:flex-start;" }, [text((advancedOpen ? "▾ " : "◂ ") + "إعدادات متقدمة")]);
-        advancedBtn.addEventListener("click", function () { state.settingsPanelAdvancedOpen = !advancedOpen; refreshPanel(); });
-        panel.appendChild(advancedBtn);
+        var advOpen = state.settingsPanelAdvancedOpen === true;
+        var advSec = drawerSection(null);
+        var advBtn = el("button", { class: "btn btn--tertiary", type: "button", style: "align-self:flex-start;" }, [text((advOpen ? "▾ " : "◂ ") + "متقدم")]);
+        advBtn.addEventListener("click", function () { state.settingsPanelAdvancedOpen = !advOpen; buildBody(); });
+        advSec.appendChild(advBtn);
 
-        if (advancedOpen) {
-          var divergeSwitch = el("div", { class: "switch", role: "switch", tabindex: "0", "aria-checked": settings.linked === false ? "true" : "false" }, [
-            el("span", { class: "switch__track" }), el("span", {}, [text("استخدم حجم كتلة مختلف عن حجم الصفحة")])
-          ]);
-          divergeSwitch.addEventListener("click", function () {
-            applyLinkedSettingChange(reportId, settings.linked === false);
-            render();
-            reopen();
-          });
-          panel.appendChild(divergeSwitch);
-
+        if (advOpen) {
+          advSec.appendChild(switchRow("استخدم حجم كتلة مختلف عن حجم الصفحة", settings.linked === false, function (v) {
+            applyLinkedSettingChange(reportId, v);
+            onSettingsMutated();
+          }));
           if (settings.linked === false) {
-            panel.appendChild(fieldWrap("حجم الكتلة", presetRow(cfg.BLOCK_SIZE_PRESETS, settings.blockSize, function (v) { onChange("blockSize", v); })));
+            advSec.appendChild(fieldWrap("حجم الكتلة", presetRow(cfg.BLOCK_SIZE_PRESETS, settings.blockSize, function (v) { onSettingChange("blockSize", v); })));
+          }
+          if (PH.settings.isDivergent(settings)) {
+            advSec.appendChild(el("div", { class: "fs-caption", style: "color:var(--brass);" }, [text("حجم الكتلة يختلف عن عدد صفوف الصفحة.")]));
+          }
+          var modeRow = el("div", { class: "row", style: "gap:var(--sp-1); flex-wrap:wrap;" });
+          [["none", "بدون"], ["block", "تراكم لكل كتلة"], ["running", "تراكم مستمر"]].forEach(function (pair) {
+            var btn = el("button", { class: "pill", type: "button", "aria-pressed": settings.cumulativeMode === pair[0] ? "true" : "false" }, [text(pair[1])]);
+            btn.addEventListener("click", function () { onSettingChange("cumulativeMode", pair[0]); });
+            modeRow.appendChild(btn);
+          });
+          advSec.appendChild(fieldWrap("نمط التراكم", modeRow));
+          if (settings.cumulativeMode !== "none") {
+            advSec.appendChild(switchRow("إظهار إجمالي الكتلة الجزئية الأخيرة", !!settings.showPartialBlockTotal, function (v) { onSettingChange("showPartialBlockTotal", v); }));
           }
         }
-
-        if (PH.settings.isDivergent(settings)) {
-          panel.appendChild(el("div", { class: "fs-caption", style: "color:var(--brass);" }, [text("حجم الكتلة يختلف عن عدد صفوف الصفحة.")]));
-        }
-
-        var modeRow = el("div", { class: "row", style: "gap:var(--sp-1); flex-wrap:wrap;" });
-        [["none", "بدون"], ["block", "تراكم لكل كتلة"], ["running", "تراكم مستمر"]].forEach(function (pair) {
-          var btn = el("button", { class: "pill", type: "button", "aria-pressed": settings.cumulativeMode === pair[0] ? "true" : "false" }, [text(pair[1])]);
-          btn.addEventListener("click", function () { onChange("cumulativeMode", pair[0]); });
-          modeRow.appendChild(btn);
-        });
-        panel.appendChild(fieldWrap("نمط التراكم", modeRow));
-
-        if (settings.cumulativeMode !== "none") {
-          var partialSwitch = el("div", { class: "switch", role: "switch", tabindex: "0", "aria-checked": settings.showPartialBlockTotal ? "true" : "false" }, [
-            el("span", { class: "switch__track" }), el("span", {}, [text("إظهار إجمالي الكتلة الجزئية الأخيرة")])
-          ]);
-          partialSwitch.addEventListener("click", function () { onChange("showPartialBlockTotal", !settings.showPartialBlockTotal); });
-          panel.appendChild(partialSwitch);
-        }
+        body.appendChild(advSec);
       }
 
-      var pageCount = PH.settings.estimatedPageCount(computeSheetFor(reportId, combination).rows.length, settings.rowsPerPage);
-      panel.appendChild(el("div", { class: "fs-caption text-soft" }, [text("~" + pageCount + " صفحة عند الطباعة")]));
+      var scopeSec = drawerSection("النطاق");
+      cfg.DIMENSION_ORDER.forEach(function (dim) { scopeSec.appendChild(dimensionMergeBlock(dim)); });
+      body.appendChild(scopeSec);
 
-      var resetBtn = el("button", { class: "btn btn--tertiary" }, [text("إعادة ضبط هذا التقرير للافتراضي")]);
-      resetBtn.addEventListener("click", function () {
-        resetSettingsScope("report", reportId).then(function () {
-          render();
-          reopen();
+      var outputSec = drawerSection("العرض والإخراج");
+      outputSec.appendChild(switchRow("تطبيق الفرز/التصفية/البحث الحالي على الطباعة والتصدير", !!state.applyToPrintExport, function (v) {
+        state.applyToPrintExport = v;
+        onSettingsMutated();
+      }));
+      body.appendChild(outputSec);
+
+      var actionsSec = el("div", { style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-3); border-top:1px solid var(--line);" });
+      var resetBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("إعادة ضبط هذا التقرير للافتراضي")]);
+      resetBtn.addEventListener("click", function () { resetSettingsScope("report", reportId).then(onSettingsMutated); });
+      actionsSec.appendChild(resetBtn);
+      var applyAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("طبّق عدد الصفوف على كل التقارير")]);
+      applyAllBtn.addEventListener("click", function () {
+        applyRowsPerPageToAllReports(resolveSettings(reportId, sheetKey).rowsPerPage).then(function () {
+          showToast("تم تطبيق عدد الصفوف على كل التقارير");
+          onSettingsMutated();
         });
       });
-      panel.appendChild(resetBtn);
-
-      var applyAllBtn = el("button", { class: "btn btn--tertiary" }, [text("طبّق عدد الصفوف على كل التقارير")]);
-      applyAllBtn.addEventListener("click", onApplyToAllReports);
-      panel.appendChild(applyAllBtn);
+      actionsSec.appendChild(applyAllBtn);
+      body.appendChild(actionsSec);
     }
 
-    refreshPanel();
-    containerEl.appendChild(panel);
-    ensureSettingsClickAwayListener();
-  }
-
-  var settingsClickAwayBound = false;
-  function ensureSettingsClickAwayListener() {
-    if (settingsClickAwayBound) return;
-    settingsClickAwayBound = true;
-    document.addEventListener("click", function (e) {
-      var panel = document.querySelector(".settings-panel-open");
-      if (!panel || panel.contains(e.target) || e.target.id === "btn-sheet-settings") return;
-      panel.remove();
-    });
+    buildBody();
+    registerDialog(overlay);
   }
 
   function showToast(message, withUndo) {
@@ -6131,7 +6253,7 @@ PH.app = (function () {
         "aria-controls": "main-content"
       }, [
         el("span", {}, [text(rep.label)]),
-        el("span", { class: "report-tab-h__shortcut" }, [text("Ctrl+" + rep.shortcut)])
+        el("span", { class: "report-tab-h__shortcut" }, [text("Alt+" + rep.shortcut)])
       ]);
       if (!disabled) {
         var activateTab = function () { if (state.activeReportId !== rep.id) resetQueryState(); state.activeReportId = rep.id; render(); };
@@ -6157,8 +6279,6 @@ PH.app = (function () {
   }
 
   var overflowMenuOpen = false;
-  var openGroupingPopoverDim = null;
-
   function renderScopeBar(container) {
     container.innerHTML = "";
     var rows = store.getSourceRows();
@@ -6194,20 +6314,8 @@ PH.app = (function () {
         pillRow.appendChild(pill);
       });
 
-      var groupBtn = el("button", { class: "btn btn--tertiary", id: "btn-group-" + dim, title: "دمج قيم " + cfg.DIMENSION_LABELS[dim] + " المتفرقة في مجموعة واحدة" }, [text("⚙ دمج")]);
-      groupBtn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        openGroupingPopoverDim = openGroupingPopoverDim === dim ? null : dim;
-        render();
-      });
-      pillRow.appendChild(groupBtn);
-
       dimRow.appendChild(pillRow);
       container.appendChild(dimRow);
-
-      if (openGroupingPopoverDim === dim) {
-        renderGroupingPopover(dimRow, dim);
-      }
     });
     var months = store.getSourceRows().map(function (row) { return row.month; }).filter(function (value, index, values) { return value && values.indexOf(value) === index; }).sort();
     if (months.length) {
@@ -6220,101 +6328,11 @@ PH.app = (function () {
     }
   }
 
-  function renderGroupingPopover(anchorRow, dim) {
-    var popover = el("div", { class: "panel-2", style: "position:absolute; z-index:35; width:260px; margin-top:4px; display:flex; flex-direction:column; gap:var(--sp-3);" });
-    popover.addEventListener("click", function (e) { e.stopPropagation(); });
-
-    popover.appendChild(el("div", { class: "fs-body", style: "font-weight:600;" }, [text("تجميع " + cfg.DIMENSION_LABELS[dim])]));
-
-    var selected = {};
-    var partition = matrix.resolvePartition(dim, state.dimensionGroups);
-    var isFullyMerged = matrix.isFullyMerged(dim, state.dimensionGroups);
-
-    var checkHost = el("div", { style: "display:flex; flex-direction:column; gap:4px;" });
-    cfg.DIMENSIONS[dim].forEach(function (val) {
-      var row = el("label", { class: "row", style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-body); cursor:pointer;" });
-      var cb = el("input", { type: "checkbox" });
-      cb.addEventListener("change", function () {
-        if (cb.checked) selected[val] = true; else delete selected[val];
-      });
-      row.appendChild(cb);
-      row.appendChild(el("span", {}, [text(val)]));
-      checkHost.appendChild(row);
-    });
-    popover.appendChild(checkHost);
-
-    var mergeBtn = el("button", { class: "btn btn--secondary" }, [text("دمج القيم المحددة")]);
-    mergeBtn.addEventListener("click", function () {
-      var chosen = Object.keys(selected);
-      if (chosen.length < 2) { showToast("اختر قيمتين على الأقل للدمج", false); return; }
-      var remaining = [];
-      partition.forEach(function (g) {
-        var keep = g.filter(function (v) { return chosen.indexOf(v) === -1; });
-        if (keep.length) remaining.push(keep);
-      });
-      var newPartition = remaining.concat([chosen]);
-      state.dimensionGroups[dim] = newPartition;
-      resetQueryState();
-      state.activeCombination[dim] = cfg.DIMENSIONS[dim].slice();
-      openGroupingPopoverDim = null;
-      render();
-    });
-    popover.appendChild(mergeBtn);
-
-    if (partition.some(function (g) { return g.length > 1; })) {
-      popover.appendChild(el("div", { class: "fs-caption text-soft" }, [text("المجموعات الحالية:")]));
-      partition.filter(function (g) { return g.length > 1; }).forEach(function (g) {
-        var row = el("div", { class: "row", style: "justify-content:space-between; align-items:center;" });
-        row.appendChild(el("span", { class: "fs-caption" }, [text(g.join(" + "))]));
-        var splitBtn = el("button", { class: "btn btn--tertiary" }, [text("فصل")]);
-        splitBtn.addEventListener("click", function () {
-          var remaining = partition.filter(function (other) { return other !== g; });
-          var split = g.map(function (v) { return [v]; });
-          var newPartition = remaining.concat(split);
-          state.dimensionGroups[dim] = newPartition.length === cfg.DIMENSIONS[dim].length ? null : newPartition;
-          resetQueryState();
-          state.activeCombination[dim] = cfg.DIMENSIONS[dim].slice();
-          openGroupingPopoverDim = null;
-          render();
-        });
-        row.appendChild(splitBtn);
-        popover.appendChild(row);
-      });
-    }
-
-    var actionsRow = el("div", { class: "row", style: "gap:var(--sp-2);" });
-    var mergeAllBtn = el("button", { class: "btn btn--tertiary" }, [text(isFullyMerged ? "✓ الكل مدموج" : "دمج الكل")]);
-    mergeAllBtn.disabled = isFullyMerged;
-    mergeAllBtn.addEventListener("click", function () {
-      state.dimensionGroups[dim] = [cfg.DIMENSIONS[dim].slice()];
-      resetQueryState();
-      state.activeCombination[dim] = cfg.DIMENSIONS[dim].slice();
-      openGroupingPopoverDim = null;
-      render();
-    });
-    actionsRow.appendChild(mergeAllBtn);
-
-    var resetBtn = el("button", { class: "btn btn--tertiary" }, [text("فصل الكل")]);
-    resetBtn.disabled = matrix.isDefaultPartition(dim, state.dimensionGroups);
-    resetBtn.addEventListener("click", function () {
-      state.dimensionGroups[dim] = null;
-      resetQueryState();
-      state.activeCombination[dim] = cfg.DIMENSIONS[dim].slice();
-      openGroupingPopoverDim = null;
-      render();
-    });
-    actionsRow.appendChild(resetBtn);
-    popover.appendChild(actionsRow);
-
-    anchorRow.appendChild(popover);
-  }
-
   var scopeClickAwayBound = false;
   function ensureScopeClickAwayListener() {
     if (scopeClickAwayBound) return;
     scopeClickAwayBound = true;
     document.addEventListener("click", function () {
-      if (openGroupingPopoverDim !== null) { openGroupingPopoverDim = null; renderScopeBar($("scope-bar")); }
       if (overflowMenuOpen) { closeOverflowMenu(); }
     });
   }
@@ -6374,24 +6392,17 @@ PH.app = (function () {
     toolbar.appendChild(searchInput);
     var countLabel = el("span", { class: "fs-caption text-soft", id: "row-count-label", "aria-live": "polite" });
     toolbar.appendChild(countLabel);
-    var applyToggle = el("div", {
-      class: "switch", role: "switch", tabindex: "0", "aria-checked": state.applyToPrintExport ? "true" : "false",
-      title: "عند التفعيل، تعكس الطباعة والتصدير الفرز والتصفية والبحث الحاليين في الجدول"
-    }, [
-      el("span", { class: "switch__track" }),
-      el("span", {}, [text("تطبيق على الطباعة والتصدير")])
-    ]);
-    applyToggle.addEventListener("click", function () {
-      state.applyToPrintExport = !state.applyToPrintExport;
-      render();
-    });
-    toolbar.appendChild(applyToggle);
-    var settingsBtn = el("button", { class: "btn btn--tertiary", id: "btn-sheet-settings" }, [text("⚙ إعدادات الصفحة")]);
-    settingsBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      toggleSettingsPanel(settingsBtn, toolbar);
-    });
-    toolbar.appendChild(settingsBtn);
+    if (isViewFiltered()) {
+      var filterChip = el("button", {
+        class: "pill", type: "button", "aria-pressed": state.applyToPrintExport ? "true" : "false",
+        title: "عند التفعيل، تعكس الطباعة والتصدير الفرز والتصفية والبحث الحاليين في الجدول"
+      }, [text(state.applyToPrintExport ? "مصفّى — يُطبَّق على الإخراج" : "مصفّى — لا يُطبَّق")]);
+      filterChip.addEventListener("click", function () {
+        state.applyToPrintExport = !state.applyToPrintExport;
+        render();
+      });
+      toolbar.appendChild(filterChip);
+    }
     container.appendChild(toolbar);
 
     var tableArea = el("div", { class: "card", id: "table-area" });
@@ -6484,6 +6495,7 @@ PH.app = (function () {
     var actionList = [
       { label: "طباعة", hint: "Ctrl P", run: function () { openPrintPreview(); } },
       { label: "تصدير Excel", hint: "Ctrl E", run: function () { openExportDialog(); } },
+      { label: "الإعدادات", hint: "Ctrl ,", run: function () { openSettingsDrawer(); } },
       { label: "إضافة صف", hint: "", run: function () { openGuidedFormOverlay(); } },
       { label: "استيراد ملف", hint: "", run: function () { var i = $("btn-import"); if (i) i.click(); } },
       { label: "تنزيل نموذج بيانات", hint: "", run: function () { downloadTemplate(); } },
@@ -7162,10 +7174,10 @@ PH.app = (function () {
     renderScopeBar($("scope-bar"));
     renderMain($("main-content"));
     var hasData = store.getSourceRows().length > 0;
-    var importBtn = $("btn-import");
     var printBtn = $("btn-print");
-    if (importBtn) importBtn.style.display = hasData ? "none" : "";
+    var settingsDrawerBtn = $("btn-settings-drawer");
     if (printBtn) printBtn.style.display = hasData ? "" : "none";
+    if (settingsDrawerBtn) settingsDrawerBtn.style.display = hasData ? "" : "none";
     updateSaveStateEl();
   }
 
@@ -7178,6 +7190,7 @@ PH.app = (function () {
     });
     document.addEventListener("keydown", function (e) {
       var ctrl = e.ctrlKey || e.metaKey;
+      var alt = e.altKey;
       var target = e.target;
       // e.key reflects actual case (Shift, Caps Lock), so comparing it
       // directly against a lowercase literal silently breaks with Caps Lock
@@ -7199,12 +7212,13 @@ PH.app = (function () {
       }
       if (ctrl && key === "z") { e.preventDefault(); var l = store.undo(); if (l) { render(); showToast("تراجع: " + l); } }
       else if (ctrl && key === "y") { e.preventDefault(); var l2 = store.redo(); if (l2) { render(); showToast("إعادة: " + l2); } }
-      else if (ctrl && /^[1-8]$/.test(key)) {
+      else if (alt && /^[1-8]$/.test(key)) {
         e.preventDefault();
         var rep = cfg.REPORTS.filter(function (r) { return r.shortcut === key; })[0];
         if (rep) { if (state.activeReportId !== rep.id) resetQueryState(); state.activeReportId = rep.id; render(); }
       } else if (ctrl && key === "p") { e.preventDefault(); openPrintPreview(); }
       else if (ctrl && key === "e") { e.preventDefault(); openExportDialog(); }
+      else if (ctrl && key === ",") { e.preventDefault(); openSettingsDrawer(); }
       else if (ctrl && e.shiftKey && key === "t") { e.preventDefault(); runSelfTestOverlay(); }
     });
   }
@@ -7503,7 +7517,7 @@ PH.app = (function () {
       var picker = el("div", { style: "display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-4);" });
 
       var reportsSec = section("التقارير");
-      var reportsBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-2); padding:var(--sp-2);" });
+      var reportsBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-inner); padding:var(--sp-2);" });
       availableReports.forEach(function (rep) {
         var checked = plan.reports.indexOf(rep.id) !== -1;
         reportsBox.appendChild(checklistRow(rep.label, checked, function (isChecked) {
@@ -7515,7 +7529,7 @@ PH.app = (function () {
       picker.appendChild(reportsSec);
 
       var slicesSec = section("الشرائح");
-      var slicesBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-2); padding:var(--sp-2);" });
+      var slicesBox = el("div", { style: "display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-inner); padding:var(--sp-2);" });
       if (includesPages) {
         slicesBox.appendChild(el("div", { class: "fs-caption text-soft" }, [text("تقرير الصفحات يجمع كل الشرائح بالفعل.")]));
       } else {
@@ -7758,6 +7772,8 @@ PH.app = (function () {
     });
     document.addEventListener("ph-import-file", function (e) { startImportFlow(e.detail); });
     document.getElementById("btn-add").addEventListener("click", openGuidedFormOverlay);
+    var settingsDrawerBtn = document.getElementById("btn-settings-drawer");
+    if (settingsDrawerBtn) settingsDrawerBtn.addEventListener("click", openSettingsDrawer);
     window.addEventListener("beforeunload", function (e) {
       if (store.getSaveState() !== "saved") { e.preventDefault(); e.returnValue = ""; }
     });
