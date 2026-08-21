@@ -473,6 +473,7 @@ body.theme-transition-lock, body.theme-transition-lock * {
   .title-bar__save-state { margin-inline-start: auto; }
   .report-tabs { overflow-x: auto; }
   .card { padding: var(--sp-3); }
+  .btn--icon { width: 44px; height: 44px; }
 }
 
 body.modal-open { overflow: hidden; }
@@ -506,6 +507,17 @@ body.modal-open { overflow: hidden; }
 .btn--tertiary:active { transform: translateY(0.5px); }
 .btn--tertiary:disabled { opacity: .5; pointer-events: none; }
 
+.totals-mode-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-mid);
+}
+.totals-mode-card:hover { border-color: var(--line-strong); background: transparent; }
+.totals-mode-card[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink-wash);
+  color: var(--ink);
+}
+
 .btn--ghost { background: transparent; color: var(--text-soft); border: 1px solid var(--line-strong); font-weight: 500; }
 .btn--ghost:hover { background: var(--paper-sunken); color: var(--text); }
 .btn--ghost:active { transform: translateY(0.5px); }
@@ -518,10 +530,9 @@ body.modal-open { overflow: hidden; }
 
 .overflow-wrap { position: relative; }
 .overflow-menu {
-  position: absolute;
-  inset-inline-end: 0;
-  top: calc(100% + var(--sp-2));
+  position: fixed;
   min-width: 200px;
+  max-width: calc(100vw - var(--sp-6));
   background: var(--paper-raised);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-mid);
@@ -6537,6 +6548,23 @@ PH.app = (function () {
     if (toggle) toggle.setAttribute("aria-expanded", "false");
   }
 
+  function positionOverflowMenu() {
+    var toggle = $("btn-overflow-toggle");
+    var menu = $("overflow-menu");
+    if (!toggle || !menu) return;
+    var rect = toggle.getBoundingClientRect();
+    var margin = 8;
+    var menuWidth = menu.offsetWidth || 200;
+    var menuHeight = menu.offsetHeight || 0;
+    var left = rect.right - menuWidth;
+    if (left < margin) left = margin;
+    if (left + menuWidth > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - menuWidth);
+    var top = rect.bottom + margin;
+    if (top + menuHeight > window.innerHeight - margin) top = Math.max(margin, rect.top - menuHeight - margin);
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+
   function bindOverflowMenu() {
     var toggle = $("btn-overflow-toggle");
     var menu = $("overflow-menu");
@@ -6546,6 +6574,7 @@ PH.app = (function () {
       overflowMenuOpen = !overflowMenuOpen;
       menu.hidden = !overflowMenuOpen;
       toggle.setAttribute("aria-expanded", overflowMenuOpen ? "true" : "false");
+      if (overflowMenuOpen) positionOverflowMenu();
     });
     menu.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -7593,6 +7622,29 @@ PH.app = (function () {
     return pipeline.sorted;
   }
 
+  function totalsDiagram(mode) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 90 36");
+    svg.setAttribute("width", "90");
+    svg.setAttribute("height", "36");
+    function cell(x, y, w, h, fill) {
+      var r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("x", x); r.setAttribute("y", y); r.setAttribute("width", w); r.setAttribute("height", h);
+      r.setAttribute("rx", "1.5"); r.setAttribute("fill", fill); r.setAttribute("stroke", "var(--line-strong)");
+      svg.appendChild(r);
+      return r;
+    }
+    for (var row = 0; row < 3; row++) {
+      cell(2, 2 + row * 11, 60, 9, "var(--paper-sunken)");
+    }
+    if (mode === "column") {
+      cell(66, 2, 22, 31, "var(--brass)");
+    } else if (mode === "embedded") {
+      cell(2, 24, 84, 9, "var(--brass)");
+    }
+    return svg;
+  }
+
   function openExportDialog() {
     if (document.querySelector('[role="dialog"]')) return;
     var rows = store.getSourceRows();
@@ -7784,18 +7836,19 @@ PH.app = (function () {
         grandRow.appendChild(el("span", {}, [text("إضافة صف الإجمالي الكلي")]));
         totalsSec.appendChild(grandRow);
 
-        var cumWrap = el("div", { style: "display:flex; flex-direction:column; gap:4px;" });
-        [
-          ["none", "بدون", "بلا عمود تراكمي ولا صفوف إجمالي بين الصفحات"],
-          ["column", "في عمود", "عمود تراكمي إضافي يظهر في كل صف"],
-          ["embedded", "صفوف بين الصفحات", "صف إجمالي بعد كل صفحة، مع نقل اختياري للصفحة التالية"]
-        ].forEach(function (opt) {
-          var r = el("div", {});
-          r.appendChild(radioRow("cumulative", opt[0], plan.totals.cumulative, opt[1], function (v) { plan.totals.cumulative = v; }));
-          r.appendChild(el("div", { class: "fs-caption text-soft", style: "margin-inline-start:24px;" }, [text(opt[2])]));
-          cumWrap.appendChild(r);
+        var modesRow = el("div", { style: "display:flex; gap:var(--sp-3); flex-wrap:wrap;" });
+        [["none", "بدون"], ["column", "في عمود"], ["embedded", "صفوف بين الصفحات"]].forEach(function (opt) {
+          var card = el("button", {
+            class: "btn btn--tertiary totals-mode-card", type: "button",
+            "aria-pressed": plan.totals.cumulative === opt[0] ? "true" : "false",
+            style: "display:flex; flex-direction:column; align-items:center; gap:4px; padding:var(--sp-2);"
+          });
+          card.appendChild(totalsDiagram(opt[0]));
+          card.appendChild(el("span", { class: "fs-caption" }, [text(opt[1])]));
+          card.addEventListener("click", function () { plan.totals.cumulative = opt[0]; refresh(); });
+          modesRow.appendChild(card);
         });
-        totalsSec.appendChild(cumWrap);
+        totalsSec.appendChild(modesRow);
 
         if (plan.totals.cumulative === "column") {
           var basisRow = el("div", { class: "row", style: "gap:var(--sp-4); margin-inline-start:24px;" });
