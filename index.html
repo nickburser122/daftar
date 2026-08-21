@@ -6,6 +6,7 @@
 try {
   var savedTheme = localStorage.getItem("daftar-theme");
   if (savedTheme === "dark" || savedTheme === "light") document.documentElement.setAttribute("data-theme", savedTheme);
+  else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.setAttribute("data-theme", "dark");
 } catch (e) {}
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -69,6 +70,8 @@ try {
   --row-h: 40px;
 
   --shadow-2: 0 8px 24px rgba(43, 42, 38, .10);
+  --scrim: rgba(20, 18, 14, .32);
+  --shadow-print-page: 0 12px 32px rgba(43, 42, 38, .18), 0 0 0 1px rgba(43, 42, 38, .02);
   --motion-fast: 150ms ease-out;
   --motion-panel: 200ms ease-out;
   --motion-toast: 250ms ease-out;
@@ -101,6 +104,8 @@ try {
   --err-wash: #33211D;
 
   --shadow-2: 0 8px 24px rgba(0, 0, 0, .35);
+  --scrim: rgba(0, 0, 0, .55);
+  --shadow-print-page: 0 12px 32px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .08);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -963,7 +968,7 @@ table.grid { table-layout: fixed; }
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(20, 18, 14, .32);
+  background: var(--scrim);
   z-index: 90;
 }
 
@@ -1152,7 +1157,7 @@ table.grid { table-layout: fixed; }
 .print-preview-page {
   background: #FFFFFF;
   border: 1px solid var(--line-strong);
-  box-shadow: 0 12px 32px rgba(43,42,38,.18), 0 0 0 1px rgba(43,42,38,.02);
+  box-shadow: var(--shadow-print-page);
   transform-origin: top center;
 }
 
@@ -1335,7 +1340,7 @@ PH.config = (function () {
       order: 1,
       shortcut: "1",
       requiresOptional: [],
-      defaults: { rowsPerPage: 10, blockSize: 10, cumulativeMode: "block", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 10, blockSize: 10, cumulativeMode: "block", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["name", "unit", "dispensed", "price", "value", "cumulative"],
       printTotalField: "value"
     },
@@ -1345,7 +1350,7 @@ PH.config = (function () {
       order: 2,
       shortcut: "2",
       requiresOptional: ["balance"],
-      defaults: { rowsPerPage: 24, blockSize: 24, cumulativeMode: "running", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: 24, cumulativeMode: "running", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["name", "unit", "balance", "price", "value", "cumulative"],
       printTotalField: "value"
     },
@@ -1355,7 +1360,7 @@ PH.config = (function () {
       order: 3,
       shortcut: "3",
       requiresOptional: ["balance"],
-      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["book", "serial", "name", "unit", "dispensed", "balance"],
       printTotalField: null
     },
@@ -1365,7 +1370,7 @@ PH.config = (function () {
       order: 4,
       shortcut: "4",
       requiresOptional: [],
-      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["printPageNo", "value", "budget", "shift", "dispense"],
       printTotalField: "value"
     },
@@ -1375,7 +1380,7 @@ PH.config = (function () {
       order: 5,
       shortcut: "5",
       requiresOptional: ["group"],
-      defaults: { rowsPerPage: 9, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 9, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["group", "value"],
       printTotalField: "value"
     },
@@ -1385,7 +1390,7 @@ PH.config = (function () {
       order: 6,
       shortcut: "6",
       requiresOptional: [],
-      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "wmean", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "wmean", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["name", "unit", "priceCount", "priceMin", "priceMax", "priceAvg", "qty", "value", "variancePct"],
       printTotalField: "value"
     },
@@ -1395,7 +1400,7 @@ PH.config = (function () {
       order: 7,
       shortcut: "7",
       requiresOptional: [],
-      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["id", "budget", "shift", "dispense", "book", "serial", "name", "unit", "dispensed", "price", "dispensedValue", "group", "month", "received", "balance", "pharmacy", "pageNo", "actions"],
       printTotalField: null
     },
@@ -1405,7 +1410,7 @@ PH.config = (function () {
       order: 8,
       shortcut: "8",
       requiresOptional: [],
-      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true },
+      defaults: { rowsPerPage: 24, blockSize: null, cumulativeMode: "none", cumulativeAgg: "sum", showPartialBlockTotal: true, showPageMarkers: true, printOrientation: "portrait" },
       columns: ["book", "serial", "name", "unit", "received", "dispensed", "price", "movingAvg", "valueOut", "negativeStock"],
       printTotalField: "valueOut"
     }
@@ -1416,6 +1421,7 @@ PH.config = (function () {
 
   var ROWS_PER_PAGE_PRESETS = [9, 10, 12, 16, 20, 24, 30];
   var BLOCK_SIZE_PRESETS = [9, 10, 12, 16, 20, 24, 30, 40, 50];
+  var PRINT_ORIENTATIONS = ["portrait", "landscape"];
 
   var COLUMN_LABELS = {
     name: "الاسم",
@@ -1494,6 +1500,7 @@ PH.config = (function () {
     REPORTS_BY_ID: REPORTS_BY_ID,
     ROWS_PER_PAGE_PRESETS: ROWS_PER_PAGE_PRESETS,
     BLOCK_SIZE_PRESETS: BLOCK_SIZE_PRESETS,
+    PRINT_ORIENTATIONS: PRINT_ORIENTATIONS,
     COLUMN_LABELS: COLUMN_LABELS,
     MONEY_COLUMNS: MONEY_COLUMNS,
     MAX_SAFE_SCALED: MAX_SAFE_SCALED,
@@ -2084,6 +2091,8 @@ PH.settings = (function () {
         return typeof value === "boolean" ? value : !!defaults.showPartialBlockTotal;
       case "showPageMarkers":
         return typeof value === "boolean" ? value : !!defaults.showPageMarkers;
+      case "printOrientation":
+        return cfg.PRINT_ORIENTATIONS.indexOf(value) !== -1 ? value : defaults.printOrientation;
       default:
         return value;
     }
@@ -4287,6 +4296,7 @@ PH.viewEntry = (function () {
       c.budget = singleValueOrNull(activeCombination.budget);
       c.shift = singleValueOrNull(activeCombination.shift);
       c.dispense = singleValueOrNull(activeCombination.dispense);
+      c.month = opts.defaultMonth || null;
       return c;
     }
 
@@ -5948,8 +5958,13 @@ PH.app = (function () {
     var sanitized = {};
     if (scopeName === "report") {
       for (var k in fields) sanitized[k] = PH.settings.sanitize(scopeKey, k, fields[k]);
-    } else if (scopeName === "global" && "rowsPerPage" in fields) {
-      sanitized.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(fields.rowsPerPage) !== -1 ? fields.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0];
+    } else if (scopeName === "global") {
+      Object.keys(fields).forEach(function (k) {
+        if (k === "rowsPerPage") sanitized.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(fields.rowsPerPage) !== -1 ? fields.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0];
+        else if (k === "showPageMarkers") sanitized.showPageMarkers = typeof fields.showPageMarkers === "boolean" ? fields.showPageMarkers : true;
+        else if (k === "printOrientation") sanitized.printOrientation = cfg.PRINT_ORIENTATIONS.indexOf(fields.printOrientation) !== -1 ? fields.printOrientation : cfg.PRINT_ORIENTATIONS[0];
+        else sanitized[k] = fields[k];
+      });
     } else {
       sanitized = fields;
     }
@@ -5991,12 +6006,12 @@ PH.app = (function () {
   // defaults.blockSize === null - and writing a blockSize onto them is
   // exactly the write sanitize() exists to refuse), so they stay
   // report-specific even from this action.
-  var GLOBAL_SETTING_FIELDS = ["rowsPerPage"];
+  var GLOBAL_SETTING_FIELDS = ["rowsPerPage", "showPageMarkers", "printOrientation"];
 
-  function applyRowsPerPageToAllReports(rowsPerPage) {
-    var fields = {};
-    GLOBAL_SETTING_FIELDS.forEach(function (f) { if (f === "rowsPerPage") fields.rowsPerPage = rowsPerPage; });
-    return applySettingChange("global", null, fields).then(function () {
+  function applySettingsToAllReports(fields) {
+    var promoted = {};
+    GLOBAL_SETTING_FIELDS.forEach(function (f) { if (f in fields) promoted[f] = fields[f]; });
+    return applySettingChange("global", null, promoted).then(function () {
       var clears = [];
       Object.keys(cfg.REPORTS_BY_ID).forEach(function (rid) {
         var bucket = state.settingsOverrides.report[rid];
@@ -6025,11 +6040,8 @@ PH.app = (function () {
     return row;
   }
 
-  function checkPrintGeometry(rowsPerPage) {
-    var base = { rowsPerPage: rowsPerPage };
-    var portrait = PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "portrait" }));
-    if (!portrait.ok) return portrait;
-    return PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, base, { orientation: "landscape" }));
+  function checkPrintGeometry(rowsPerPage, orientation) {
+    return PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, { rowsPerPage: rowsPerPage, orientation: orientation }));
   }
 
   function drawerSection(titleText) {
@@ -6082,11 +6094,17 @@ PH.app = (function () {
     }
 
     function onSettingChange(field, value) {
-      if (field === "rowsPerPage") {
-        var geoCheck = checkPrintGeometry(value);
-        if (!geoCheck.ok) { showToast("عدد الصفوف هذا كبير جدًا ليُطبع بوضوح على الصفحة", false); return; }
-      }
       var settings = resolveSettings(reportId, sheetKey);
+      if (field === "rowsPerPage" || field === "printOrientation") {
+        var orientation = field === "printOrientation" ? value : settings.printOrientation;
+        var rowsPerPage = field === "rowsPerPage" ? value : settings.rowsPerPage;
+        var geoCheck = checkPrintGeometry(rowsPerPage, orientation);
+        if (!geoCheck.ok) { showToast("هذا الإعداد كبير جدًا ليُطبع بوضوح على الصفحة", false); return; }
+        var otherOrientation = orientation === "portrait" ? "landscape" : "portrait";
+        if (!checkPrintGeometry(rowsPerPage, otherOrientation).ok) {
+          showToast("تنبيه: هذا العدد قد لا يتّسع بوضوح عند التحويل إلى الاتجاه الآخر", false);
+        }
+      }
       var fields;
       if (field === "rowsPerPage" || field === "blockSize") {
         var next = PH.settings.applyLinkedChange(settings, field, value);
@@ -6131,8 +6149,18 @@ PH.app = (function () {
       mergeBtn.addEventListener("click", function () {
         var chosen = Object.keys(selected);
         if (chosen.length < 2) { showToast("اختر قيمتين على الأقل للدمج", false); return; }
-        var remaining = partition.filter(function (g) { return !g.some(function (v) { return chosen.indexOf(v) !== -1; }); });
-        applyPartition(remaining.concat([chosen]));
+        var remaining = [];
+        partition.forEach(function (g) {
+          var leftover = g.filter(function (v) { return chosen.indexOf(v) === -1; });
+          if (leftover.length) remaining.push(leftover);
+        });
+        var merged = remaining.concat([chosen]);
+        var totalValues = merged.reduce(function (n, g) { return n + g.length; }, 0);
+        if (totalValues !== cfg.DIMENSIONS[dim].length) {
+          showToast("تعذّر الدمج — خلل في تكامل التقسيم", false);
+          return;
+        }
+        applyPartition(merged);
       });
       mergeRow.appendChild(mergeBtn);
 
@@ -6177,6 +6205,13 @@ PH.app = (function () {
         pageSec.appendChild(el("div", { class: "fs-caption", style: "color:var(--brass);" }, [text("هذا التقرير يتجاوز الإعدادات العامة.")]));
       }
       pageSec.appendChild(fieldWrap("عدد الصفوف في الصفحة", presetRow(cfg.ROWS_PER_PAGE_PRESETS, settings.rowsPerPage, function (v) { onSettingChange("rowsPerPage", v); })));
+      var orientRow = el("div", { class: "row", style: "gap:var(--sp-1);" });
+      [["portrait", "عمودي"], ["landscape", "أفقي"]].forEach(function (pair) {
+        var obtn = el("button", { class: "pill", type: "button", "aria-pressed": settings.printOrientation === pair[0] ? "true" : "false" }, [text(pair[1])]);
+        obtn.addEventListener("click", function () { onSettingChange("printOrientation", pair[0]); });
+        orientRow.appendChild(obtn);
+      });
+      pageSec.appendChild(fieldWrap("اتجاه الطباعة", orientRow));
       if (repDef.printTotalField) {
         pageSec.appendChild(switchRow("إظهار حدود الصفحات في الجدول", settings.showPageMarkers !== false, function (v) { onSettingChange("showPageMarkers", v); }));
       }
@@ -6269,10 +6304,11 @@ PH.app = (function () {
       var resetBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("إعادة ضبط هذا التقرير للافتراضي")]);
       resetBtn.addEventListener("click", function () { resetSettingsScope("report", reportId).then(onSettingsMutated); });
       actionsSec.appendChild(resetBtn);
-      var applyAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("طبّق عدد الصفوف على كل التقارير")]);
+      var applyAllBtn = el("button", { class: "btn btn--tertiary", type: "button" }, [text("طبّق هذه الإعدادات على كل التقارير")]);
       applyAllBtn.addEventListener("click", function () {
-        applyRowsPerPageToAllReports(resolveSettings(reportId, sheetKey).rowsPerPage).then(function () {
-          showToast("تم تطبيق عدد الصفوف على كل التقارير");
+        var current = resolveSettings(reportId, sheetKey);
+        applySettingsToAllReports({ rowsPerPage: current.rowsPerPage, showPageMarkers: current.showPageMarkers, printOrientation: current.printOrientation }).then(function () {
+          showToast("تم تطبيق الإعدادات على كل التقارير");
           onSettingsMutated();
         });
       });
@@ -6540,7 +6576,7 @@ PH.app = (function () {
   }
 
   function openSourceRowEditor(original) {
-    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "تعديل صف مصدر", style: "position:fixed; inset:0; z-index:80; background:rgba(20,18,14,.32); display:flex; align-items:center; justify-content:center; padding:var(--sp-6);" });
+    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "تعديل صف مصدر", style: "position:fixed; inset:0; z-index:80; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:var(--sp-6);" });
     var panel = el("div", { class: "panel-2", style: "width:min(820px, 100%); max-height:90vh; overflow:auto; display:flex; flex-direction:column; gap:var(--sp-4);" });
     panel.appendChild(el("div", { class: "fs-title" }, [text("تعديل صف مصدر")]));
     panel.appendChild(el("div", { class: "fs-caption text-soft" }, [text("النقر المزدوج على أي صف يفتح هذا المحرر. المعرّف ثابت ولا يتغير.")]));
@@ -6625,7 +6661,7 @@ PH.app = (function () {
     if (document.querySelector('[role="dialog"]')) return;
     var allItems = commandPaletteItems();
     var selected = 0;
-    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "لوحة الأوامر", style: "position:fixed; inset:0; z-index:90; background:rgba(20,18,14,.32); display:flex; align-items:flex-start; justify-content:center; padding-top:14vh;" });
+    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "لوحة الأوامر", style: "position:fixed; inset:0; z-index:90; background:var(--scrim); display:flex; align-items:flex-start; justify-content:center; padding-top:14vh;" });
     var panel = el("div", { class: "panel-2", style: "width:min(520px, 92vw); max-height:60vh; padding:0; overflow:hidden; display:flex; flex-direction:column;" });
     var input = el("input", { class: "input", type: "text", placeholder: "اكتب اسم تقرير، إجراء، أو شريحة…", style: "border:0; border-bottom:1px solid var(--line); border-radius:0; height:46px;" });
     var list = el("div", { role: "listbox", style: "overflow:auto; padding:var(--sp-1);" });
@@ -7374,7 +7410,7 @@ PH.app = (function () {
     // outputRowsFor's re-blocking above, just doesn't earn the stamp).
     var isFilteredForDisplay = hasActiveFilterOrSearch();
     var reportLabel = repDef.label + activeScopeSuffix() + (isFilteredForDisplay ? " (مصفّى)" : "");
-    var orientation = "portrait";
+    var orientation = settings.printOrientation || "portrait";
     var calibration = { offsetTopMm: 0, offsetBottomMm: 0, offsetInnerMm: 0, offsetOuterMm: 0, scalePercent: 0 };
     var showingRuler = false;
 
@@ -7382,7 +7418,7 @@ PH.app = (function () {
     var toolbar = el("div", { class: "print-preview-toolbar" }, [
       el("button", { class: "btn btn--secondary" }, [text("إغلاق")]),
       el("button", { class: "btn btn--tertiary" }, [text("⚙ معايرة الطباعة")]),
-      el("button", { class: "btn btn--tertiary" }, [text("الاتجاه: رأسي")]),
+      el("button", { class: "btn btn--tertiary" }, [text(orientation === "portrait" ? "الاتجاه: رأسي" : "الاتجاه: أفقي")]),
       el("button", { class: "btn btn--primary" }, [text("طباعة")])
     ]);
     var closeBtn = toolbar.children[0];
@@ -7465,8 +7501,12 @@ PH.app = (function () {
       calPanel.style.display = isOpen ? "none" : "flex";
     });
     orientationBtn.addEventListener("click", function () {
-      orientation = orientation === "portrait" ? "landscape" : "portrait";
+      var nextOrientation = orientation === "portrait" ? "landscape" : "portrait";
+      var geoCheck = checkPrintGeometry(settings.rowsPerPage || 24, nextOrientation);
+      if (!geoCheck.ok) { showToast("عدد الصفوف الحالي كبير جدًا لهذا الاتجاه", false); return; }
+      orientation = nextOrientation;
       orientationBtn.textContent = orientation === "portrait" ? "الاتجاه: رأسي" : "الاتجاه: أفقي";
+      applySettingChange("report", state.activeReportId, { printOrientation: orientation });
       refreshPreview();
       if (calPanel.style.display !== "none") buildCalPanel();
     });
@@ -7586,7 +7626,7 @@ PH.app = (function () {
       return wrap;
     }
 
-    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "تصدير", style: "position:fixed; inset:0; z-index:80; background:rgba(20,18,14,.32); display:flex; align-items:center; justify-content:center; padding:var(--sp-6);" });
+    var overlay = el("div", { role: "dialog", "aria-modal": "true", "aria-label": "تصدير", style: "position:fixed; inset:0; z-index:80; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:var(--sp-6);" });
     var panel = el("div", { class: "panel-2", style: "width:min(760px, 100%); max-height:90vh; overflow:auto; display:flex; flex-direction:column; gap:var(--sp-4);" });
     panel.appendChild(el("div", { class: "fs-title" }, [text("تصدير")]));
     var body = el("div", { style: "display:flex; flex-direction:column; gap:var(--sp-4);" });
