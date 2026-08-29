@@ -14,9 +14,43 @@ try {
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.5' fill='%231F6F5C'/%3E%3Cpath fill='%23F7F4EE' fill-rule='evenodd' d='M7.8 11.4 L12.2 7 H15.6 C20.9 7 24.2 11 24.2 16 C24.2 21 20.9 25 15.6 25 H7.8 Z M12.6 11.9 H15.6 C17.9 11.9 19.3 13.6 19.3 16 C19.3 18.4 17.9 20.1 15.6 20.1 H12.6 Z'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/png;base64,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">
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&family=IBM+Plex+Sans+Arabic:wght@400;600&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+<style>
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("ibm-plex-mono-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("ibm-plex-sans-arabic-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("ibm-plex-sans-arabic-600.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Amiri";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("amiri-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Amiri";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("amiri-700.ttf") format("truetype");
+}
+</style>
 
 <style>
 :root {
@@ -212,6 +246,7 @@ body.theme-transition-lock, body.theme-transition-lock * {
   grid-template-columns: 1fr;
   grid-template-areas: "titlebar" "banner" "main";
   height: 100vh;
+  height: 100dvh;
   background: var(--paper);
 }
 
@@ -1489,20 +1524,6 @@ PH.config = function() {
     dispensedValue: true
   };
   var MAX_SAFE_SCALED = BigInt(Number.MAX_SAFE_INTEGER);
-  var BRASS_COLUMNS = {
-    value: true,
-    cumulative: true,
-    cumulative2: true,
-    sum1: true,
-    sum2: true,
-    group1: true,
-    group2: true,
-    priceAvg: true,
-    priceMin: true,
-    priceMax: true,
-    movingAvg: true,
-    valueOut: true
-  };
   var VIRTUAL_COLUMNS = {
     id: true,
     actions: true
@@ -1572,6 +1593,18 @@ PH.config = function() {
   function decimalsForColumn(columnKey) {
     return COLUMN_DECIMALS[columnKey] !== undefined ? COLUMN_DECIMALS[columnKey] : 4;
   }
+  var COMPUTED_NUMERIC_COLUMNS = {
+    qty: true,
+    priceCount: true,
+    variancePct: true,
+    printPageNo: true
+  };
+  function isNumericColumn(columnKey) {
+    if (MONEY_COLUMNS[columnKey]) return true;
+    var fieldDef = FIELDS_BY_KEY[columnKey];
+    if (fieldDef && (fieldDef.type === "number" || fieldDef.type === "integer")) return true;
+    return !!COMPUTED_NUMERIC_COLUMNS[columnKey];
+  }
   return {
     SCALE_QTY,
     SCALE_PRICE,
@@ -1579,6 +1612,7 @@ PH.config = function() {
     SCALE_AVG,
     COLUMN_DECIMALS,
     decimalsForColumn,
+    isNumericColumn,
     DIMENSIONS,
     DIMENSION_ORDER,
     DIMENSION_LABELS,
@@ -1593,11 +1627,95 @@ PH.config = function() {
     COLUMN_LABELS,
     MONEY_COLUMNS,
     MAX_SAFE_SCALED,
-    BRASS_COLUMNS,
     VIRTUAL_COLUMNS,
     COLUMN_WEIGHTS,
     printableColumns,
     withoutHiddenColumns
+  };
+}();
+
+window.PH = window.PH || {};
+
+PH.fixtures = function() {
+  var cfg = PH.config;
+  function mulberry32(seed) {
+    return function() {
+      seed |= 0;
+      seed = seed + 1831565813 | 0;
+      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function generateFixtureSource(seed, count) {
+    var rnd = mulberry32(seed);
+    var drugs = [ {
+      name: "Amaryl 10 T",
+      unit: "10 T"
+    }, {
+      name: "Panadol Extra",
+      unit: "20 T"
+    }, {
+      name: "Augmentin 1g",
+      unit: "14 T"
+    }, {
+      name: "Concor 5mg",
+      unit: "30 T"
+    }, {
+      name: "Zantac Syrup",
+      unit: "150 ML"
+    }, {
+      name: "Ventolin Inhaler",
+      unit: "1 PC"
+    } ];
+    var books = [ "A", "B", "C" ];
+    var rows = [];
+    for (var i = 0; i < count; i++) {
+      var d = drugs[Math.floor(rnd() * drugs.length)];
+      var price = Math.round((5 + rnd() * 200) * cfg.SCALE_PRICE) / cfg.SCALE_PRICE;
+      var dispensed = Math.round(rnd() * 50 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
+      var balance = Math.round(rnd() * 500 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
+      rows.push({
+        budget: "قوى عاملة",
+        shift: "صباحي",
+        dispense: "مجاني",
+        book: books[Math.floor(rnd() * books.length)],
+        serial: i + 1,
+        name: d.name,
+        unit: d.unit,
+        dispensed: rnd() < .05 ? null : dispensed,
+        price,
+        group: null,
+        month: "2026-01",
+        received: null,
+        balance: rnd() < .05 ? null : balance,
+        pharmacy: null,
+        pageNo: null
+      });
+    }
+    for (var t = 0; t < 3; t++) {
+      rows.push({
+        budget: "قوى عاملة",
+        shift: "صباحي",
+        dispense: "مجاني",
+        book: cfg.TOTAL_ROW_MARKER,
+        serial: null,
+        name: "",
+        unit: "",
+        dispensed: null,
+        price: null,
+        group: null,
+        month: null,
+        received: null,
+        balance: null,
+        pharmacy: null,
+        pageNo: null
+      });
+    }
+    return rows;
+  }
+  return {
+    generateFixtureSource
   };
 }();
 
@@ -2330,7 +2448,6 @@ PH.store = function() {
     onChange,
     getSaveState,
     flushAutosave,
-    isDbUnavailable,
     getRowsVersion,
     loadPersisted,
     saveSettings,
@@ -2600,6 +2717,44 @@ PH.blocks = function() {
     renderMeanAcc,
     formatScaled,
     toBigInt
+  };
+}();
+
+window.PH = window.PH || {};
+
+PH.format = function() {
+  var cfg = PH.config;
+  var blk = PH.blocks;
+  function cell(value, columnKey) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "boolean") return value ? "نعم" : "لا";
+    if (typeof value === "bigint") {
+      var scaled = blk.formatScaled(value, cfg.decimalsForColumn(columnKey), true);
+      return columnKey === "variancePct" ? scaled + "%" : scaled;
+    }
+    if (cfg.MONEY_COLUMNS[columnKey]) {
+      var decimals = cfg.decimalsForColumn(columnKey);
+      var negative = value < 0;
+      var fixed = Math.abs(value).toFixed(decimals);
+      var parts = fixed.split(".");
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      return (negative ? "-" : "") + parts.join(".");
+    }
+    if (typeof value === "number") {
+      var numeric = Number.isInteger(value) ? String(value) : value.toFixed(2);
+      return columnKey === "variancePct" ? numeric + "%" : numeric;
+    }
+    return String(value);
+  }
+  function quantity(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "bigint") return blk.formatScaled(value, 3, true);
+    if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
+    return String(value);
+  }
+  return {
+    cell,
+    quantity
   };
 }();
 
@@ -4240,6 +4395,32 @@ PH.paginate = function() {
       geometry: g
     };
   }
+  function pageRowsTotal(slots, field) {
+    return slots.reduce(function(acc, slot) {
+      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
+      return acc + slot.row[field];
+    }, 0n);
+  }
+  function annotatePageTotals(pagesResult, field, markers) {
+    var carryForward = field ? 0n : null;
+    var grandTotal = field ? 0n : null;
+    pagesResult.pages.forEach(function(pageData) {
+      if (field) {
+        pageData.pageTotal = pageRowsTotal(pageData.rows, field);
+        pageData.carryForward = carryForward;
+        carryForward += pageData.pageTotal;
+        grandTotal = carryForward;
+      } else {
+        pageData.pageTotal = null;
+        pageData.carryForward = null;
+      }
+      pageData.isLastPage = pageData.pageNumber === pagesResult.pageCount;
+      pageData.grandTotal = grandTotal;
+      pageData.filteredMarker = markers && markers.isFiltered ? "(مصفّى)" : "";
+      pageData.filledMarker = markers && markers.hasFilledMoney ? "(مملوء)" : "";
+    });
+    return grandTotal;
+  }
   return {
     PAGE_HEIGHT_PORTRAIT_MM,
     PAGE_WIDTH_PORTRAIT_MM,
@@ -4250,7 +4431,9 @@ PH.paginate = function() {
     buildPagesFromBlocked,
     autoShrinkStep,
     computeCalibrationOffset,
-    assertGeometry
+    assertGeometry,
+    pageRowsTotal,
+    annotatePageTotals
   };
 }();
 
@@ -4268,25 +4451,7 @@ PH.viewTable = function() {
   }();
   var BUFFER_ROWS = 12;
   function formatCell(value, columnKey) {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "boolean") return value ? "نعم" : "لا";
-    if (typeof value === "bigint") {
-      var scaled = PH.blocks.formatScaled(value, cfg.decimalsForColumn(columnKey), true);
-      return columnKey === "variancePct" ? scaled + "%" : scaled;
-    }
-    if (cfg.MONEY_COLUMNS[columnKey]) {
-      var decimals = cfg.decimalsForColumn(columnKey);
-      var negative = value < 0;
-      var fixed = Math.abs(value).toFixed(decimals);
-      var parts = fixed.split(".");
-      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-      return (negative ? "-" : "") + parts.join(".");
-    }
-    if (typeof value === "number") {
-      var numeric = Number.isInteger(value) ? String(value) : value.toFixed(2);
-      return columnKey === "variancePct" ? numeric + "%" : numeric;
-    }
-    return String(value);
+    return PH.format.cell(value, columnKey);
   }
   function formatMoneyBigInt(value, decimals) {
     if (value === null || value === undefined) return "";
@@ -4349,8 +4514,7 @@ PH.viewTable = function() {
     addColgroup(headerTable);
     addColgroup(bodyTable);
     var thead = el("thead");
-    var NUMERIC_NONMONEY_COLUMNS = { dispensed: 1, received: 1, balance: 1, qty: 1, serial: 1, pageNo: 1, printPageNo: 1, priceCount: 1, variancePct: 1 };
-    function isNumericColumn(col) { return !!cfg.MONEY_COLUMNS[col] || !!NUMERIC_NONMONEY_COLUMNS[col]; }
+    function isNumericColumn(col) { return cfg.isNumericColumn(col); }
     function renderHeader() {
       thead.innerHTML = "";
       var headerRow = el("tr");
@@ -4669,7 +4833,6 @@ PH.viewTable = function() {
         if (moreOpts.scopeRowIds !== undefined) state.scopeRowIds = moreOpts.scopeRowIds;
       }
       renderHeader();
-      bodyTable.setAttribute("aria-rowcount", String(rows.length));
       sizer.style.height = rows.length * ROW_H + "px";
       renderWindow();
     }
@@ -4691,7 +4854,6 @@ PH.viewTable = function() {
         var kind = state.rowKind(row, i);
         var tr = el("tr", {
           style: "height:" + ROW_H + "px;",
-          "aria-rowindex": String(i + 1),
           "data-row-id": row.id || ""
         });
         if (opts.onRowEdit) tr.addEventListener("dblclick", function() {
@@ -5150,6 +5312,38 @@ PH.print = function() {
     measureCache = {};
     measureCacheSize = 0;
   }
+  var printCanvas = null;
+  function getPrintCtx() {
+    if (!printCanvas) printCanvas = document.createElement("canvas");
+    return printCanvas.getContext ? printCanvas.getContext("2d") : null;
+  }
+  var columnMetricsCache = null;
+  function getColumnMetrics(columns) {
+    var key = columns.join(",");
+    if (columnMetricsCache && columnMetricsCache.key === key) return columnMetricsCache.metrics;
+    var printColumns = [ "__sequence" ].concat(columns);
+    var printWeights = {
+      __sequence: .5
+    };
+    for (var wk in cfg.COLUMN_WEIGHTS) printWeights[wk] = cfg.COLUMN_WEIGHTS[wk];
+    var printWeightTotal = printColumns.reduce(function(sum, col) {
+      return sum + (printWeights[col] || 1);
+    }, 0);
+    var printTemplate = printColumns.map(function(col) {
+      return ((printWeights[col] || 1) / printWeightTotal * 100).toFixed(3) + "%";
+    }).join(" ");
+    var metrics = {
+      printColumns,
+      printWeights,
+      printWeightTotal,
+      printTemplate
+    };
+    columnMetricsCache = {
+      key,
+      metrics
+    };
+    return metrics;
+  }
   function buildPageElement(pageData, geo, columns, reportLabel, orientation, marginsMm) {
     var isLandscape = orientation === "landscape";
     var pageEl = el("div", {
@@ -5179,18 +5373,14 @@ PH.print = function() {
     var headerColumns = el("div", {
       class: "page-header__columns"
     });
-    var printWeights = { __sequence: .5 };
-    for (var wk in cfg.COLUMN_WEIGHTS) printWeights[wk] = cfg.COLUMN_WEIGHTS[wk];
-    var printWeightTotal = printColumns.reduce(function(sum, col) {
-      return sum + (printWeights[col] || 1);
-    }, 0);
-    var printTemplate = printColumns.map(function(col) {
-      return ((printWeights[col] || 1) / printWeightTotal * 100).toFixed(3) + "%";
-    }).join(" ");
+    var columnMetrics = getColumnMetrics(columns);
+    var printWeights = columnMetrics.printWeights;
+    var printWeightTotal = columnMetrics.printWeightTotal;
+    var printTemplate = columnMetrics.printTemplate;
     headerColumns.style.gridTemplateColumns = printTemplate;
     printColumns.forEach(function(col) {
       var label = col === "__sequence" ? "ت" : cfg.COLUMN_LABELS[col] || cfg.DIMENSION_LABELS[col] || (col === "pageNo" ? "رقم الصفحة" : col);
-      var isNumHeader = col === "__sequence" || cfg.MONEY_COLUMNS[col] || col === "pageNo" || col === "printPageNo";
+      var isNumHeader = col === "__sequence" || cfg.isNumericColumn(col);
       headerColumns.appendChild(el("div", {
         class: "page-header__column" + (isNumHeader ? " page-header__column--num" : "")
       }, [ text(label) ]));
@@ -5199,8 +5389,7 @@ PH.print = function() {
       class: "page-header"
     }, [ headerTop, headerColumns ]);
     grid.appendChild(header);
-    var canvas = document.createElement("canvas");
-    var ctx = canvas.getContext ? canvas.getContext("2d") : null;
+    var ctx = getPrintCtx();
     var pageSequence = 0;
     pageData.rows.forEach(function(slot) {
       var rowEl = el("div", {
@@ -5225,7 +5414,7 @@ PH.print = function() {
       printColumns.forEach(function(col) {
         var raw = col === "__sequence" ? pageSequence : slot.row ? slot.row[col] : "";
         var isNum = cfg.MONEY_COLUMNS[col] || typeof raw === "number" || typeof raw === "bigint";
-        var display = typeof raw === "bigint" ? PH.blocks.formatScaled(raw, cfg.decimalsForColumn(col), true) + (col === "variancePct" ? "%" : "") : typeof raw === "boolean" ? raw ? "نعم" : "لا" : raw === null || raw === undefined ? "" : String(raw);
+        var display = PH.format.cell(raw, col);
         var cell = el("div", {
           class: "page-cell" + (isNum ? " page-cell--num" : "")
         }, [ text(display) ]);
@@ -5234,7 +5423,7 @@ PH.print = function() {
           var pageWidthMm = isLandscape ? 297 : 210;
           var horizontalMm = marginsMm ? marginsMm.marginInnerMm + marginsMm.marginOuterMm : 24;
           var colFraction = (printWeights[col] || 1) / printWeightTotal;
-          var available = Math.max(24, (pageWidthMm - horizontalMm) * colFraction * 3.78 * .82);
+          var available = Math.max(24, Math.round((pageWidthMm - horizontalMm) * colFraction * 3.78 * .82));
           var step = paginate.autoShrinkStep(function(t, size) {
             return cachedMeasure(ctx, t, available, size);
           }, display, fontPx, available);
@@ -5269,23 +5458,36 @@ PH.print = function() {
     pageEl.appendChild(grid);
     return pageEl;
   }
-  function renderPreview(container, blockedRows, opts) {
+  function preparePrint(rows, opts) {
     var baseGeo = Object.assign({}, DEFAULT_GEO, opts.geo || {});
     var calibratedGeo = resolveGeo(baseGeo, opts.calibration);
-    var rowsPerPage = opts.rowsPerPage;
     var orientation = opts.orientation || "portrait";
-    var geometry = paginate.computeRowMm(Object.assign({
-      rowsPerPage,
+    var geoInput = Object.assign({
+      rowsPerPage: opts.rowsPerPage,
       orientation
-    }, calibratedGeo));
-    var pagesResult = paginate.buildPagesFromBlocked(blockedRows, rowsPerPage);
+    }, calibratedGeo);
+    var geometry = paginate.computeRowMm(geoInput);
+    var pagesResult = paginate.buildPagesFromBlocked(rows, opts.rowsPerPage);
+    return {
+      geometry,
+      calibratedGeo,
+      orientation,
+      pagesResult
+    };
+  }
+  function renderPreview(container, blockedRows, opts) {
+    var prep = preparePrint(blockedRows, opts);
+    var geometry = prep.geometry, calibratedGeo = prep.calibratedGeo, orientation = prep.orientation, pagesResult = prep.pagesResult;
     if (pagesResult.pages.length > 200 && !opts.largeConfirmed) {
       return {
         pageCount: pagesResult.pages.length,
         needsConfirm: true
       };
     }
-    var totalField = opts.printTotalField || null;
+    paginate.annotatePageTotals(pagesResult, opts.printTotalField || null, {
+      isFiltered: opts.isFiltered,
+      hasFilledMoney: opts.hasFilledMoney
+    });
     if (container.__pageObserver) {
       container.__pageObserver.disconnect();
       container.__pageObserver = null;
@@ -5294,46 +5496,47 @@ PH.print = function() {
     var shell = el("div", {
       class: "print-preview-shell"
     });
-    var carryForward = totalField ? 0n : null;
-    var grandTotal = totalField ? 0n : null;
-    pagesResult.pages.forEach(function(pageData) {
-      if (totalField) {
-        pageData.pageTotal = pageData.rows.reduce(function(sum, slot) {
-          if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[totalField] !== "bigint") return sum;
-          return sum + slot.row[totalField];
-        }, 0n);
-        pageData.carryForward = carryForward;
-        carryForward += pageData.pageTotal;
-        grandTotal = carryForward;
-      } else {
-        pageData.pageTotal = null;
-        pageData.carryForward = null;
-      }
-      pageData.isLastPage = pageData.pageNumber === pagesResult.pageCount;
-      pageData.grandTotal = grandTotal;
-      pageData.filteredMarker = opts.isFiltered ? "(مصفّى)" : "";
-      pageData.filledMarker = opts.hasFilledMoney ? "(مملوء)" : "";
-    });
     function realizePage(idx) {
       var pageData = pagesResult.pages[idx];
       var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo);
       var wrapper = el("div", {
-        class: "print-preview-page"
+        class: "print-preview-page",
+        "data-page-index": String(idx)
       });
       wrapper.appendChild(pageEl);
       return wrapper;
     }
+    function makePlaceholder(idx) {
+      return el("div", {
+        class: "print-preview-page print-preview-page--placeholder",
+        "data-page-index": String(idx),
+        style: "height:calc(" + geometry.pageHeightMm + "mm + 2px);"
+      });
+    }
     var EAGER_PAGE_COUNT = 3;
     var useLazy = pagesResult.pages.length > EAGER_PAGE_COUNT && typeof IntersectionObserver === "function";
     var observer = null;
+    var realizedIndices = {};
     if (useLazy) {
       observer = new IntersectionObserver(function(entries) {
         entries.forEach(function(entry) {
-          if (!entry.isIntersecting) return;
-          var placeholder = entry.target;
-          var idx = Number(placeholder.getAttribute("data-page-index"));
-          placeholder.replaceWith(realizePage(idx));
-          observer.unobserve(placeholder);
+          var target = entry.target;
+          var idx = Number(target.getAttribute("data-page-index"));
+          if (entry.isIntersecting) {
+            if (!realizedIndices[idx]) {
+              var newEl = realizePage(idx);
+              target.replaceWith(newEl);
+              realizedIndices[idx] = true;
+              observer.unobserve(target);
+              observer.observe(newEl);
+            }
+          } else if (realizedIndices[idx] && idx >= EAGER_PAGE_COUNT) {
+            var newPh = makePlaceholder(idx);
+            target.replaceWith(newPh);
+            delete realizedIndices[idx];
+            observer.unobserve(target);
+            observer.observe(newPh);
+          }
         });
       }, {
         root: container,
@@ -5344,12 +5547,9 @@ PH.print = function() {
     pagesResult.pages.forEach(function(pageData, idx) {
       if (!useLazy || idx < EAGER_PAGE_COUNT) {
         shell.appendChild(realizePage(idx));
+        realizedIndices[idx] = true;
       } else {
-        var placeholder = el("div", {
-          class: "print-preview-page print-preview-page--placeholder",
-          "data-page-index": String(idx),
-          style: "height:" + geometry.pageHeightMm + "mm;"
-        });
+        var placeholder = makePlaceholder(idx);
         shell.appendChild(placeholder);
         observer.observe(placeholder);
       }
@@ -5360,22 +5560,19 @@ PH.print = function() {
   var printJobToken = 0;
   function runPrintJob(blockedRows, opts) {
     var baseGeo = Object.assign({}, DEFAULT_GEO, opts.geo || {});
-    var calibratedGeo = resolveGeo(baseGeo, opts.calibration);
-    var geometry = paginate.computeRowMm(Object.assign({
-      rowsPerPage: opts.rowsPerPage,
-      orientation: opts.orientation || "portrait"
-    }, calibratedGeo));
+    var calibratedGeo0 = resolveGeo(baseGeo, opts.calibration);
     var geometryAssertion = paginate.assertGeometry(Object.assign({
       rowsPerPage: opts.rowsPerPage,
       orientation: opts.orientation || "portrait"
-    }, calibratedGeo));
+    }, calibratedGeo0));
     if (!geometryAssertion.ok && !opts.geometryConfirmed) {
       return {
         geometryInvalid: true,
         geometryErrors: geometryAssertion.errors
       };
     }
-    var pagesResult = paginate.buildPagesFromBlocked(blockedRows, opts.rowsPerPage);
+    var prep = preparePrint(blockedRows, opts);
+    var geometry = prep.geometry, calibratedGeo = prep.calibratedGeo, pagesResult = prep.pagesResult;
     if (pagesResult.pages.length > 200 && !opts.largeConfirmed) {
       return {
         pageCount: pagesResult.pages.length,
@@ -5392,26 +5589,11 @@ PH.print = function() {
     }
     printRoot.innerHTML = "";
     document.body.classList.toggle("print-landscape", opts.orientation === "landscape");
-    var totalField = opts.printTotalField || null;
-    var carryForward = totalField ? 0n : null;
-    var grandTotal = totalField ? 0n : null;
+    paginate.annotatePageTotals(pagesResult, opts.printTotalField || null, {
+      isFiltered: opts.isFiltered,
+      hasFilledMoney: opts.hasFilledMoney
+    });
     pagesResult.pages.forEach(function(pageData) {
-      if (totalField) {
-        pageData.pageTotal = pageData.rows.reduce(function(sum, slot) {
-          if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[totalField] !== "bigint") return sum;
-          return sum + slot.row[totalField];
-        }, 0n);
-        pageData.carryForward = carryForward;
-        carryForward += pageData.pageTotal;
-        grandTotal = carryForward;
-      } else {
-        pageData.pageTotal = null;
-        pageData.carryForward = null;
-      }
-      pageData.isLastPage = pageData.pageNumber === pagesResult.pageCount;
-      pageData.grandTotal = grandTotal;
-      pageData.filteredMarker = opts.isFiltered ? "(مصفّى)" : "";
-      pageData.filledMarker = opts.hasFilledMoney ? "(مملوء)" : "";
       var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, opts.orientation, calibratedGeo);
       printRoot.appendChild(pageEl);
     });
@@ -5479,22 +5661,12 @@ PH.exportPlan = function() {
   var blk = PH.blocks;
   var paginate = PH.paginate;
   var cfg = PH.config;
-  function shallowCopyRow(obj) {
-    var out = {};
-    for (var k in obj) out[k] = obj[k];
-    return out;
-  }
+  var util = PH.util;
   function sumField(rows, field) {
     if (!field) return 0n;
     return rows.reduce(function(acc, r) {
       if (r.isGrandTotal || r.isSubtotal || typeof r[field] !== "bigint") return acc;
       return acc + r[field];
-    }, 0n);
-  }
-  function chunkSum(slots, field) {
-    return slots.reduce(function(acc, slot) {
-      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
-      return acc + slot.row[field];
     }, 0n);
   }
   function embeddedRows(rows, field, rowsPerPage, labelColumn, carryForward, wantGrand) {
@@ -5505,7 +5677,7 @@ PH.exportPlan = function() {
       page.rows.forEach(function(slot) {
         if (slot.kind === "data") out.push(slot.row);
       });
-      var pageTotal = chunkSum(page.rows, field);
+      var pageTotal = paginate.pageRowsTotal(page.rows, field);
       var totalRow = {};
       totalRow[labelColumn] = "إجمالي الصفحة " + (idx + 1);
       totalRow[field] = pageTotal;
@@ -5543,14 +5715,6 @@ PH.exportPlan = function() {
     if (kind === "sum") return slotIndex === 0 ? "sum1" : "sum2";
     if (kind === "group") return slotIndex === 0 ? "group1" : "group2";
     return "total" + (slotIndex + 1);
-  }
-  function autoLabelFor(kind, slotIndex) {
-    var base = {
-      cumsum: "التراكمي",
-      sum: "الإجمالي الجاري",
-      group: "إجمالي الفئة"
-    }[kind] || "الإجمالي";
-    return slotIndex === 0 ? base : base + " (٢)";
   }
   function computeColumnSeries(rows, field, settings, colCfg) {
     if (colCfg.kind === "cumsum") {
@@ -5635,7 +5799,7 @@ PH.exportPlan = function() {
       labels: {}
     };
     var resolved = resolveColumnKeys(columnsConfig, reportColumns);
-    var out = rows.map(shallowCopyRow);
+    var out = rows.map(util.shallowCopy);
     var keys = [];
     var labels = {};
     resolved.forEach(function(r) {
@@ -5801,7 +5965,6 @@ PH.exportPlan = function() {
     normalizeTotals,
     migrateTotals,
     defaultKeyFor,
-    autoLabelFor,
     configSignature
   };
 }();
@@ -6001,6 +6164,31 @@ PH.exporter = function() {
     XLSX.writeFile(wb, fileName);
     return fileName;
   }
+  function runChunkedAsync(items, processItem, finish, opts) {
+    var index = 0;
+    if (opts.onProgress) opts.onProgress(0, items.length);
+    return new Promise(function(resolve, reject) {
+      function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) {
+          reject(new Error("تم الإلغاء"));
+          return;
+        }
+        if (index >= items.length) {
+          finish(resolve, reject);
+          return;
+        }
+        try {
+          processItem(items[index], index);
+          index++;
+          if (opts.onProgress) opts.onProgress(index, items.length);
+          setTimeout(next, 0);
+        } catch (err) {
+          reject(err);
+        }
+      }
+      next();
+    });
+  }
   function exportSingleWorkbook(sheets, opts) {
     var wb = XLSX.utils.book_new();
     wb.Workbook = {
@@ -6009,57 +6197,38 @@ PH.exporter = function() {
       } ]
     };
     var usedNames = [];
-    var index = 0;
-    if (opts.onProgress) opts.onProgress(0, sheets.length);
-    return new Promise(function(resolve, reject) {
-      function next() {
-        if (opts.abortToken && opts.abortToken.cancelled) {
-          reject(new Error("تم الإلغاء"));
-          return;
-        }
-        if (index >= sheets.length) {
-          var isMulti = sheets.length > 1;
-          var fileNameCombination = isMulti ? {
-            budget: null,
-            shift: null,
-            dispense: null
-          } : sheets[0] && sheets[0].combination || {
-            budget: null,
-            shift: null,
-            dispense: null
-          };
-          var descriptor = opts.descriptor;
-          if (isMulti) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-أوراق";
-          var fileName = buildFileName({
-            month: opts.month,
-            reportLabel: opts.reportLabel,
-            combination: fileNameCombination,
-            descriptor,
-            ext: "xlsx"
-          });
-          try {
-            XLSX.writeFile(wb, fileName);
-          } catch (err) {
-            reject(err);
-            return;
-          }
-          resolve(fileName);
-          return;
-        }
-        try {
-          var sheet = sheets[index];
-          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
-          var name = sheetNameFor(sheet.combination, sheet.name, usedNames, sheet.meta && sheet.meta.combined);
-          XLSX.utils.book_append_sheet(wb, ws, name);
-          index++;
-          if (opts.onProgress) opts.onProgress(index, sheets.length);
-          setTimeout(next, 0);
-        } catch (err) {
-          reject(err);
-        }
+    return runChunkedAsync(sheets, function(sheet) {
+      var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+      var name = sheetNameFor(sheet.combination, sheet.name, usedNames, sheet.meta && sheet.meta.combined);
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    }, function(resolve, reject) {
+      var isMulti = sheets.length > 1;
+      var fileNameCombination = isMulti ? {
+        budget: null,
+        shift: null,
+        dispense: null
+      } : sheets[0] && sheets[0].combination || {
+        budget: null,
+        shift: null,
+        dispense: null
+      };
+      var descriptor = opts.descriptor;
+      if (isMulti) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-أوراق";
+      var fileName = buildFileName({
+        month: opts.month,
+        reportLabel: opts.reportLabel,
+        combination: fileNameCombination,
+        descriptor,
+        ext: "xlsx"
+      });
+      try {
+        XLSX.writeFile(wb, fileName);
+      } catch (err) {
+        reject(err);
+        return;
       }
-      next();
-    });
+      resolve(fileName);
+    }, opts);
   }
   function exportZipPerSheet(sheets, opts) {
     var zip = new JSZip;
@@ -6075,58 +6244,39 @@ PH.exporter = function() {
       descriptor: opts.descriptor,
       ext: "zip"
     });
-    var index = 0;
-    if (opts.onProgress) opts.onProgress(0, sheets.length);
-    return new Promise(function(resolve, reject) {
-      function next() {
-        if (opts.abortToken && opts.abortToken.cancelled) {
-          reject(new Error("تم الإلغاء"));
-          return;
-        }
-        if (index >= sheets.length) {
-          zip.generateAsync({
-            type: "blob"
-          }, function(meta) {
-            if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent);
-          }).then(function(blob) {
-            downloadBlob(blob, zipName);
-            resolve(zipName);
-          }).catch(reject);
-          return;
-        }
-        try {
-          var sheet = sheets[index];
-          var wb = XLSX.utils.book_new();
-          wb.Workbook = {
-            Views: [ {
-              RTL: true
-            } ]
-          };
-          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
-          XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, []));
-          var buf = XLSX.write(wb, {
-            bookType: "xlsx",
-            type: "array"
-          });
-          var name = buildFileName({
-            month: opts.month,
-            reportLabel: sheet.name,
-            combination: sheet.combination,
-            descriptor: opts.descriptor,
-            ext: "xlsx"
-          });
-          name = resolveCollision(name, usedNames);
-          usedNames.push(name);
-          zip.file(name, buf);
-          index++;
-          if (opts.onProgress) opts.onProgress(index, sheets.length);
-          setTimeout(next, 0);
-        } catch (err) {
-          reject(err);
-        }
-      }
-      next();
-    });
+    return runChunkedAsync(sheets, function(sheet) {
+      var wb = XLSX.utils.book_new();
+      wb.Workbook = {
+        Views: [ {
+          RTL: true
+        } ]
+      };
+      var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+      XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, [], sheet.meta && sheet.meta.combined));
+      var buf = XLSX.write(wb, {
+        bookType: "xlsx",
+        type: "array"
+      });
+      var name = buildFileName({
+        month: opts.month,
+        reportLabel: sheet.name,
+        combination: sheet.combination,
+        descriptor: opts.descriptor,
+        ext: "xlsx"
+      });
+      name = resolveCollision(name, usedNames);
+      usedNames.push(name);
+      zip.file(name, buf);
+    }, function(resolve, reject) {
+      zip.generateAsync({
+        type: "blob"
+      }, function(meta) {
+        if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent);
+      }).then(function(blob) {
+        downloadBlob(blob, zipName);
+        resolve(zipName);
+      }).catch(reject);
+    }, opts);
   }
   function rowsToCsv(rows, columns, separator) {
     var sep = separator || ",";
@@ -6488,81 +6638,8 @@ PH.selftest = function() {
     check(result, store.isBlankCell(boundaryResult.rows[2].group), "boundary-stop-across-book");
     return result;
   }
-  function mulberry32(seed) {
-    return function() {
-      seed |= 0;
-      seed = seed + 1831565813 | 0;
-      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
   function generateFixtureSource(seed, count) {
-    var rnd = mulberry32(seed);
-    var drugs = [ {
-      name: "Amaryl 10 T",
-      unit: "10 T"
-    }, {
-      name: "Panadol Extra",
-      unit: "20 T"
-    }, {
-      name: "Augmentin 1g",
-      unit: "14 T"
-    }, {
-      name: "Concor 5mg",
-      unit: "30 T"
-    }, {
-      name: "Zantac Syrup",
-      unit: "150 ML"
-    }, {
-      name: "Ventolin Inhaler",
-      unit: "1 PC"
-    } ];
-    var books = [ "A", "B", "C" ];
-    var rows = [];
-    for (var i = 0; i < count; i++) {
-      var d = drugs[Math.floor(rnd() * drugs.length)];
-      var price = Math.round((5 + rnd() * 200) * cfg.SCALE_PRICE) / cfg.SCALE_PRICE;
-      var dispensed = Math.round(rnd() * 50 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
-      var balance = Math.round(rnd() * 500 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
-      rows.push({
-        budget: "قوى عاملة",
-        shift: "صباحي",
-        dispense: "مجاني",
-        book: books[Math.floor(rnd() * books.length)],
-        serial: i + 1,
-        name: d.name,
-        unit: d.unit,
-        dispensed: rnd() < .05 ? null : dispensed,
-        price,
-        group: null,
-        month: "2026-01",
-        received: null,
-        balance: rnd() < .05 ? null : balance,
-        pharmacy: null,
-        pageNo: null
-      });
-    }
-    for (var t = 0; t < 3; t++) {
-      rows.push({
-        budget: "قوى عاملة",
-        shift: "صباحي",
-        dispense: "مجاني",
-        book: cfg.TOTAL_ROW_MARKER,
-        serial: null,
-        name: "",
-        unit: "",
-        dispensed: null,
-        price: null,
-        group: null,
-        month: null,
-        received: null,
-        balance: null,
-        pharmacy: null,
-        pageNo: null
-      });
-    }
-    return rows;
+    return PH.fixtures.generateFixtureSource(seed, count);
   }
   function computeExpectedFixture(source) {
     function scaleQtyBigLocal(v) {
@@ -7459,69 +7536,33 @@ PH.selftest = function() {
     return result;
   }
   function runAllWithData(source, expected) {
-    var runners = {
-      blocks: function() {
-        return runBlocksInvariants();
-      },
-      reportParity: function() {
-        return runReportParity(source, expected);
-      },
-      print: function() {
-        return runPrintInvariants();
-      },
-      average: function() {
-        return runAverageInvariants(source);
-      },
-      movingAverage: function() {
-        return runMovingAverageInvariants();
-      },
-      fill: function() {
-        return runFillInvariants();
-      },
-      regressions: function() {
-        return runRegressionInvariants();
-      },
-      exportPlan: function() {
-        return runExportPlanInvariants();
-      },
-      columns: function() {
-        return runColumnChooserInvariants();
-      },
-      normalize: function() {
-        return runNormalizeInvariants();
-      },
-      matrix: function() {
-        return runMatrixInvariants();
-      },
-      validate: function() {
-        return runValidateInvariants();
-      }
+    var suites = {
+      blocks: runBlocksInvariants(),
+      reportParity: runReportParity(source, expected),
+      print: runPrintInvariants(),
+      average: runAverageInvariants(source),
+      movingAverage: runMovingAverageInvariants(),
+      fill: runFillInvariants(),
+      regressions: runRegressionInvariants(),
+      exportPlan: runExportPlanInvariants(),
+      columns: runColumnChooserInvariants(),
+      normalize: runNormalizeInvariants(),
+      matrix: runMatrixInvariants(),
+      validate: runValidateInvariants()
     };
-    var suites = {};
-    function yieldToMain() {
-      return new Promise(function(resolve) {
-        setTimeout(resolve, 0);
-      });
-    }
-    return Object.keys(runners).reduce(function(chain, k) {
-      return chain.then(yieldToMain).then(function() {
-        suites[k] = runners[k]();
-      });
-    }, Promise.resolve()).then(function() {
-      var totalPass = 0, totalFail = 0, allFailures = [];
-      Object.keys(suites).forEach(function(k) {
-        totalPass += suites[k].pass;
-        totalFail += suites[k].fail;
-        allFailures = allFailures.concat(suites[k].failures.map(function(f) {
-          return k + ": " + f;
-        }));
-      });
-      return {
-        suites,
-        totalPass,
-        totalFail,
-        failures: allFailures
-      };
+    var totalPass = 0, totalFail = 0, allFailures = [];
+    Object.keys(suites).forEach(function(k) {
+      totalPass += suites[k].pass;
+      totalFail += suites[k].fail;
+      allFailures = allFailures.concat(suites[k].failures.map(function(f) {
+        return k + ": " + f;
+      }));
+    });
+    return Promise.resolve({
+      suites,
+      totalPass,
+      totalFail,
+      failures: allFailures
     });
   }
   return {
@@ -7764,7 +7805,7 @@ PH.app = function() {
       class: "field"
     }, [ el("label", {}, [ text(labelText) ]), controlEl ]);
   }
-  function presetRow(presets, currentValue, onPick, disabled) {
+  function presetRow(presets, currentValue, onPick) {
     var row = el("div", {
       class: "row",
       style: "gap:var(--sp-1); flex-wrap:wrap;"
@@ -7775,9 +7816,8 @@ PH.app = function() {
         type: "button",
         "aria-pressed": currentValue === p ? "true" : "false"
       }, [ text(String(p)) ]);
-      if (disabled) btn.disabled = true;
       btn.addEventListener("click", function() {
-        if (!disabled) onPick(p);
+        onPick(p);
       });
       row.appendChild(btn);
     });
@@ -7927,6 +7967,7 @@ PH.app = function() {
       }, [ text("~" + pageCount + " صفحة عند الطباعة") ]));
       pageSec.appendChild(switchRow("تطبيق الفرز/التصفية/البحث الحالي على الطباعة والتصدير", !!state.applyToPrintExport, function(v) {
         state.applyToPrintExport = v;
+        store.saveSettings("global", "applyToPrintExport", v).catch(function() {});
         onSettingsMutated();
       }));
       var calibrateEntryBtn = el("button", {
@@ -8177,6 +8218,7 @@ PH.app = function() {
       var disabled = isDisabled(rep);
       var tab = el("div", {
         class: "report-tab-h",
+        id: "report-tab-" + rep.id,
         role: "tab",
         "aria-selected": state.activeReportId === rep.id ? "true" : "false",
         "aria-disabled": disabled ? "true" : "false",
@@ -8221,6 +8263,8 @@ PH.app = function() {
       }
       container.appendChild(tab);
     });
+    var panel = document.getElementById("main-content");
+    if (panel) panel.setAttribute("aria-labelledby", "report-tab-" + state.activeReportId);
   }
   var overflowMenuOpen = false;
   function refreshScope() {
@@ -8533,9 +8577,7 @@ PH.app = function() {
     function onReposition() {
       positionPopoverNear(pop, anchorEl, opts.align);
     }
-    var cancelled = false;
     setTimeout(function() {
-      if (cancelled) return;
       document.addEventListener("click", onDocClick);
       document.addEventListener("keydown", onDocKey);
       window.addEventListener("resize", onReposition);
@@ -8545,7 +8587,6 @@ PH.app = function() {
       el: pop,
       anchor: anchorEl,
       cleanup: function() {
-        cancelled = true;
         document.removeEventListener("click", onDocClick);
         document.removeEventListener("keydown", onDocKey);
         window.removeEventListener("resize", onReposition);
@@ -8859,6 +8900,7 @@ PH.app = function() {
       }, [ text(state.applyToPrintExport ? "مصفّى — يُطبَّق على الإخراج" : "مصفّى — لا يُطبَّق") ]);
       filterChip.addEventListener("click", function() {
         state.applyToPrintExport = !state.applyToPrintExport;
+        store.saveSettings("global", "applyToPrintExport", state.applyToPrintExport).catch(function() {});
         render();
       });
       toolbar.appendChild(filterChip);
@@ -8885,8 +8927,7 @@ PH.app = function() {
   function columnTypesFor(columns) {
     var types = {};
     columns.forEach(function(c) {
-      var fieldDef = cfg.FIELDS_BY_KEY[c];
-      if (cfg.MONEY_COLUMNS[c] || fieldDef && (fieldDef.type === "number" || fieldDef.type === "integer")) types[c] = "number"; else if (c === "qty" || c === "priceCount" || c === "variancePct" || c === "printPageNo") types[c] = "number"; else types[c] = "text";
+      types[c] = cfg.isNumericColumn(c) ? "number" : "text";
     });
     return types;
   }
@@ -9378,7 +9419,7 @@ PH.app = function() {
         showToast("تعذّرت قراءة الملف: " + (err && err.message ? err.message : "ملف غير صالح"), false);
       }
     };
-    if (ext === "csv") reader.readAsArrayBuffer(file); else reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(file);
   }
   function bindPaste() {
     document.addEventListener("paste", function(e) {
@@ -9831,9 +9872,6 @@ PH.app = function() {
         class: "fs-body",
         style: "color:var(--err);"
       }, [ text(String(s.problemRowCount) + " صف به مشكلة") ]));
-      if (s.duplicateCount) summaryRow.appendChild(el("div", {
-        class: "fs-caption text-soft"
-      }, [ text(String(s.duplicateCount) + " صف مكرر") ]));
       if (Object.keys(wiz.excludedRowIndexes).length) summaryRow.appendChild(el("div", {
         class: "fs-caption text-soft"
       }, [ text(Object.keys(wiz.excludedRowIndexes).length + " صف مستبعد") ]));
@@ -9914,7 +9952,7 @@ PH.app = function() {
   }
   function loadSampleData() {
     function proceed() {
-      var source = window.PH_FIXTURES && window.PH_FIXTURES.source || PH.selftest.generateFixtureSource(20260701, 40);
+      var source = window.PH_FIXTURES && window.PH_FIXTURES.source || PH.fixtures.generateFixtureSource(20260701, 40);
       store.setSourceRows(source.slice(0, 40), "تحميل بيانات تجريبية", true);
       render();
     }
@@ -10113,7 +10151,7 @@ PH.app = function() {
   function activeScopeSuffix() {
     var parts = cfg.DIMENSION_ORDER.map(function(dim) {
       return reports.dimLabel(state.activeCombination, dim);
-    }).filter(function(label, i) {
+    }).filter(function(label) {
       return label !== "الكل";
     });
     if (state.activeMonth) parts.push("الشهر: " + state.activeMonth);
@@ -10643,21 +10681,24 @@ PH.app = function() {
     footer.appendChild(footerSummary);
     footer.appendChild(footerActions);
     panel.appendChild(footer);
+    var progressFill = el("div", {
+      class: "progress-bar__fill",
+      style: "width:0%;"
+    });
+    var progressCaption = el("div", {
+      class: "fs-caption text-soft"
+    }, [ text("0 / 0") ]);
+    var progressCancelBtn = el("button", {
+      class: "btn btn--tertiary",
+      type: "button"
+    }, [ text("إلغاء") ]);
     var progressWrap = el("div", {
       style: "display:none; flex-direction:column; gap:var(--sp-3); padding:var(--sp-4); border-top:1px solid var(--line);"
     }, [ el("div", {
       class: "fs-body"
     }, [ text("جارٍ التصدير…") ]), el("div", {
       class: "progress-bar"
-    }, [ el("div", {
-      class: "progress-bar__fill",
-      style: "width:0%;"
-    }) ]), el("div", {
-      class: "fs-caption text-soft"
-    }, [ text("0 / 0") ]), el("button", {
-      class: "btn btn--tertiary",
-      type: "button"
-    }, [ text("إلغاء") ]) ]);
+    }, [ progressFill ]), progressCaption, progressCancelBtn ]);
     panel.appendChild(progressWrap);
     overlay.appendChild(panel);
     function buildBody() {
@@ -11081,9 +11122,9 @@ PH.app = function() {
       body.style.display = "none";
       footer.style.display = "none";
       progressWrap.style.display = "flex";
-      var fill = progressWrap.querySelector(".progress-bar__fill");
-      var caption = progressWrap.querySelector(".fs-caption");
-      var cancelProgressBtn = progressWrap.querySelector("button");
+      var fill = progressFill;
+      var caption = progressCaption;
+      var cancelProgressBtn = progressCancelBtn;
       cancelProgressBtn.addEventListener("click", function() {
         abortToken.cancelled = true;
       });
@@ -11095,7 +11136,7 @@ PH.app = function() {
         onProgress: function(done, total, percent) {
           var pct = percent !== undefined ? percent : total ? done / total * 100 : 0;
           fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-          caption.textContent = percent !== undefined ? "ضغط الملف… " + Math.round(percent) + "%" : done + " / " + total;
+          caption.textContent = percent !== undefined && done === total ? "ضغط الملف… " + Math.round(pct) + "%" : done + " / " + total;
         }
       }).then(function(name) {
         store.saveSettings("meta", "exportPlan", plan).catch(function() {});
@@ -11168,6 +11209,7 @@ PH.app = function() {
       state.settingsOverrides.report = scopes.report;
       state.settingsOverrides.linked = scopes.linked;
       state.hiddenColumns = scopes.hiddenColumns || {};
+      if (scopes.global && scopes.global.applyToPrintExport !== undefined) state.applyToPrintExport = scopes.global.applyToPrintExport;
       migrateSheetScopeSettings(scopes.sheet);
       render();
     }).catch(function() {
@@ -11200,9 +11242,6 @@ PH.app = function() {
         return;
       }
       render();
-    });
-    document.addEventListener("ph-import-file", function(e) {
-      startImportFlow(e.detail);
     });
     document.getElementById("btn-add").addEventListener("click", openGuidedFormOverlay);
     var settingsDrawerBtn = document.getElementById("btn-settings-drawer");
@@ -11237,9 +11276,6 @@ PH.app = function() {
         e.preventDefault();
         e.returnValue = "";
       }
-    });
-    document.addEventListener("visibilitychange", function() {
-      if (document.visibilityState === "hidden") store.flushAutosave();
     });
     if (/[?&]selftest=1/.test(window.location.search)) runSelfTestOverlay();
   }
