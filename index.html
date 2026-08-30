@@ -1524,6 +1524,20 @@ PH.config = function() {
     dispensedValue: true
   };
   var MAX_SAFE_SCALED = BigInt(Number.MAX_SAFE_INTEGER);
+  var BRASS_COLUMNS = {
+    value: true,
+    cumulative: true,
+    cumulative2: true,
+    sum1: true,
+    sum2: true,
+    group1: true,
+    group2: true,
+    priceAvg: true,
+    priceMin: true,
+    priceMax: true,
+    movingAvg: true,
+    valueOut: true
+  };
   var VIRTUAL_COLUMNS = {
     id: true,
     actions: true
@@ -1627,95 +1641,11 @@ PH.config = function() {
     COLUMN_LABELS,
     MONEY_COLUMNS,
     MAX_SAFE_SCALED,
+    BRASS_COLUMNS,
     VIRTUAL_COLUMNS,
     COLUMN_WEIGHTS,
     printableColumns,
     withoutHiddenColumns
-  };
-}();
-
-window.PH = window.PH || {};
-
-PH.fixtures = function() {
-  var cfg = PH.config;
-  function mulberry32(seed) {
-    return function() {
-      seed |= 0;
-      seed = seed + 1831565813 | 0;
-      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
-  function generateFixtureSource(seed, count) {
-    var rnd = mulberry32(seed);
-    var drugs = [ {
-      name: "Amaryl 10 T",
-      unit: "10 T"
-    }, {
-      name: "Panadol Extra",
-      unit: "20 T"
-    }, {
-      name: "Augmentin 1g",
-      unit: "14 T"
-    }, {
-      name: "Concor 5mg",
-      unit: "30 T"
-    }, {
-      name: "Zantac Syrup",
-      unit: "150 ML"
-    }, {
-      name: "Ventolin Inhaler",
-      unit: "1 PC"
-    } ];
-    var books = [ "A", "B", "C" ];
-    var rows = [];
-    for (var i = 0; i < count; i++) {
-      var d = drugs[Math.floor(rnd() * drugs.length)];
-      var price = Math.round((5 + rnd() * 200) * cfg.SCALE_PRICE) / cfg.SCALE_PRICE;
-      var dispensed = Math.round(rnd() * 50 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
-      var balance = Math.round(rnd() * 500 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
-      rows.push({
-        budget: "قوى عاملة",
-        shift: "صباحي",
-        dispense: "مجاني",
-        book: books[Math.floor(rnd() * books.length)],
-        serial: i + 1,
-        name: d.name,
-        unit: d.unit,
-        dispensed: rnd() < .05 ? null : dispensed,
-        price,
-        group: null,
-        month: "2026-01",
-        received: null,
-        balance: rnd() < .05 ? null : balance,
-        pharmacy: null,
-        pageNo: null
-      });
-    }
-    for (var t = 0; t < 3; t++) {
-      rows.push({
-        budget: "قوى عاملة",
-        shift: "صباحي",
-        dispense: "مجاني",
-        book: cfg.TOTAL_ROW_MARKER,
-        serial: null,
-        name: "",
-        unit: "",
-        dispensed: null,
-        price: null,
-        group: null,
-        month: null,
-        received: null,
-        balance: null,
-        pharmacy: null,
-        pageNo: null
-      });
-    }
-    return rows;
-  }
-  return {
-    generateFixtureSource
   };
 }();
 
@@ -2448,6 +2378,7 @@ PH.store = function() {
     onChange,
     getSaveState,
     flushAutosave,
+    isDbUnavailable,
     getRowsVersion,
     loadPersisted,
     saveSettings,
@@ -2746,15 +2677,8 @@ PH.format = function() {
     }
     return String(value);
   }
-  function quantity(value) {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "bigint") return blk.formatScaled(value, 3, true);
-    if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
-    return String(value);
-  }
   return {
-    cell,
-    quantity
+    cell
   };
 }();
 
@@ -3446,13 +3370,13 @@ PH.query = function() {
           var nf = norm.arabicNormalize(String(val));
           if (nf.indexOf(prepared[i].nq) === -1) return false;
         } else if (f.kind === "text-checklist") {
-          var isBlankVal = val === null || val === undefined || val === "";
+          var isBlankVal = util.isBlank(val);
           if (isBlankVal) {
             if (f.values.indexOf(null) === -1) return false;
           } else if (f.values.indexOf(val) === -1) return false;
         } else if (f.kind === "blank") {
-          var isBlank = val === null || val === undefined || val === "";
-          if (f.wantBlank !== isBlank) return false;
+          var valIsBlank = util.isBlank(val);
+          if (f.wantBlank !== valIsBlank) return false;
         } else if (f.kind === "numeric") {
           if (val === null || val === undefined) return false;
           if (f.op === "between") {
@@ -4395,18 +4319,16 @@ PH.paginate = function() {
       geometry: g
     };
   }
-  function pageRowsTotal(slots, field) {
-    return slots.reduce(function(acc, slot) {
-      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
-      return acc + slot.row[field];
-    }, 0n);
-  }
-  function annotatePageTotals(pagesResult, field, markers) {
-    var carryForward = field ? 0n : null;
-    var grandTotal = field ? 0n : null;
+  function annotatePageTotals(pagesResult, totalField, opts) {
+    opts = opts || {};
+    var carryForward = totalField ? 0n : null;
+    var grandTotal = totalField ? 0n : null;
     pagesResult.pages.forEach(function(pageData) {
-      if (field) {
-        pageData.pageTotal = pageRowsTotal(pageData.rows, field);
+      if (totalField) {
+        pageData.pageTotal = pageData.rows.reduce(function(sum, slot) {
+          if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[totalField] !== "bigint") return sum;
+          return sum + slot.row[totalField];
+        }, 0n);
         pageData.carryForward = carryForward;
         carryForward += pageData.pageTotal;
         grandTotal = carryForward;
@@ -4416,10 +4338,10 @@ PH.paginate = function() {
       }
       pageData.isLastPage = pageData.pageNumber === pagesResult.pageCount;
       pageData.grandTotal = grandTotal;
-      pageData.filteredMarker = markers && markers.isFiltered ? "(مصفّى)" : "";
-      pageData.filledMarker = markers && markers.hasFilledMoney ? "(مملوء)" : "";
+      pageData.filteredMarker = opts.isFiltered ? "(مصفّى)" : "";
+      pageData.filledMarker = opts.hasFilledMoney ? "(مملوء)" : "";
     });
-    return grandTotal;
+    return pagesResult;
   }
   return {
     PAGE_HEIGHT_PORTRAIT_MM,
@@ -4432,7 +4354,6 @@ PH.paginate = function() {
     autoShrinkStep,
     computeCalibrationOffset,
     assertGeometry,
-    pageRowsTotal,
     annotatePageTotals
   };
 }();
@@ -4608,7 +4529,7 @@ PH.viewTable = function() {
       var hasBlanks = false;
       (state.filterRows.length ? state.filterRows : state.rows).forEach(function(row) {
         var v = row[column];
-        if (v === null || v === undefined || v === "") {
+        if (util.isBlank(v)) {
           hasBlanks = true;
           return;
         }
@@ -4833,6 +4754,7 @@ PH.viewTable = function() {
         if (moreOpts.scopeRowIds !== undefined) state.scopeRowIds = moreOpts.scopeRowIds;
       }
       renderHeader();
+      bodyTable.setAttribute("aria-rowcount", String(rows.length));
       sizer.style.height = rows.length * ROW_H + "px";
       renderWindow();
     }
@@ -4854,6 +4776,7 @@ PH.viewTable = function() {
         var kind = state.rowKind(row, i);
         var tr = el("tr", {
           style: "height:" + ROW_H + "px;",
+          "aria-rowindex": String(i + 1),
           "data-row-id": row.id || ""
         });
         if (opts.onRowEdit) tr.addEventListener("dblclick", function() {
@@ -4982,6 +4905,7 @@ PH.viewEntry = function() {
   var norm = PH.normalize;
   var store = PH.store;
   var validate = PH.validate;
+  var reports = PH.reports;
   var el = PH.dom.el;
   var text = PH.dom.text;
   function nextSerial(rows, book) {
@@ -5165,12 +5089,12 @@ PH.viewEntry = function() {
     var liveValue = el("div", {
       class: "fs-display num",
       style: "color:var(--brass); text-align:center; padding:var(--sp-4);"
-    }, [ text("0.00") ]);
+    }, [ text(PH.blocks.formatScaled(0n, cfg.decimalsForColumn("dispensedValue"), true)) ]);
     root.appendChild(liveValue);
     function updateLiveValue() {
       var d = norm.parseNumber(dispensedInput.value) || 0;
       var p = norm.parseNumber(priceInput.value) || 0;
-      liveValue.textContent = (d * p).toFixed(2);
+      liveValue.textContent = PH.blocks.formatScaled(reports.scaleValueOf(d, p), cfg.decimalsForColumn("dispensedValue"), true);
     }
     dispensedInput.addEventListener("input", updateLiveValue);
     priceInput.addEventListener("input", updateLiveValue);
@@ -5241,7 +5165,7 @@ PH.viewEntry = function() {
         i.value = "";
       });
       serialInput.value = nextSerial(nextRows, bookInput.value);
-      liveValue.textContent = "0.00";
+      liveValue.textContent = PH.blocks.formatScaled(0n, cfg.decimalsForColumn("dispensedValue"), true);
       if (opts.onCommit) opts.onCommit(candidate);
     });
     root.appendChild(commitBtn);
@@ -5369,11 +5293,11 @@ PH.print = function() {
     var headerTop = el("div", {
       class: "page-header__top"
     }, [ el("span", {}, [ text(reportLabel) ]), el("span", {}, [ text("صفحة " + pageData.pageNumber) ]) ]);
-    var printColumns = [ "__sequence" ].concat(columns);
     var headerColumns = el("div", {
       class: "page-header__columns"
     });
     var columnMetrics = getColumnMetrics(columns);
+    var printColumns = columnMetrics.printColumns;
     var printWeights = columnMetrics.printWeights;
     var printWeightTotal = columnMetrics.printWeightTotal;
     var printTemplate = columnMetrics.printTemplate;
@@ -5423,7 +5347,7 @@ PH.print = function() {
           var pageWidthMm = isLandscape ? 297 : 210;
           var horizontalMm = marginsMm ? marginsMm.marginInnerMm + marginsMm.marginOuterMm : 24;
           var colFraction = (printWeights[col] || 1) / printWeightTotal;
-          var available = Math.max(24, Math.round((pageWidthMm - horizontalMm) * colFraction * 3.78 * .82));
+          var available = Math.max(24, (pageWidthMm - horizontalMm) * colFraction * 3.78 * .82);
           var step = paginate.autoShrinkStep(function(t, size) {
             return cachedMeasure(ctx, t, available, size);
           }, display, fontPx, available);
@@ -5458,36 +5382,23 @@ PH.print = function() {
     pageEl.appendChild(grid);
     return pageEl;
   }
-  function preparePrint(rows, opts) {
+  function renderPreview(container, blockedRows, opts) {
     var baseGeo = Object.assign({}, DEFAULT_GEO, opts.geo || {});
     var calibratedGeo = resolveGeo(baseGeo, opts.calibration);
+    var rowsPerPage = opts.rowsPerPage;
     var orientation = opts.orientation || "portrait";
-    var geoInput = Object.assign({
-      rowsPerPage: opts.rowsPerPage,
+    var geometry = paginate.computeRowMm(Object.assign({
+      rowsPerPage,
       orientation
-    }, calibratedGeo);
-    var geometry = paginate.computeRowMm(geoInput);
-    var pagesResult = paginate.buildPagesFromBlocked(rows, opts.rowsPerPage);
-    return {
-      geometry,
-      calibratedGeo,
-      orientation,
-      pagesResult
-    };
-  }
-  function renderPreview(container, blockedRows, opts) {
-    var prep = preparePrint(blockedRows, opts);
-    var geometry = prep.geometry, calibratedGeo = prep.calibratedGeo, orientation = prep.orientation, pagesResult = prep.pagesResult;
+    }, calibratedGeo));
+    var pagesResult = paginate.buildPagesFromBlocked(blockedRows, rowsPerPage);
     if (pagesResult.pages.length > 200 && !opts.largeConfirmed) {
       return {
         pageCount: pagesResult.pages.length,
         needsConfirm: true
       };
     }
-    paginate.annotatePageTotals(pagesResult, opts.printTotalField || null, {
-      isFiltered: opts.isFiltered,
-      hasFilledMoney: opts.hasFilledMoney
-    });
+    var totalField = opts.printTotalField || null;
     if (container.__pageObserver) {
       container.__pageObserver.disconnect();
       container.__pageObserver = null;
@@ -5495,6 +5406,10 @@ PH.print = function() {
     container.innerHTML = "";
     var shell = el("div", {
       class: "print-preview-shell"
+    });
+    paginate.annotatePageTotals(pagesResult, totalField, {
+      isFiltered: opts.isFiltered,
+      hasFilledMoney: opts.hasFilledMoney
     });
     function realizePage(idx) {
       var pageData = pagesResult.pages[idx];
@@ -5506,7 +5421,7 @@ PH.print = function() {
       wrapper.appendChild(pageEl);
       return wrapper;
     }
-    function makePlaceholder(idx) {
+    function placeholderFor(idx) {
       return el("div", {
         class: "print-preview-page print-preview-page--placeholder",
         "data-page-index": String(idx),
@@ -5516,26 +5431,24 @@ PH.print = function() {
     var EAGER_PAGE_COUNT = 3;
     var useLazy = pagesResult.pages.length > EAGER_PAGE_COUNT && typeof IntersectionObserver === "function";
     var observer = null;
-    var realizedIndices = {};
     if (useLazy) {
       observer = new IntersectionObserver(function(entries) {
         entries.forEach(function(entry) {
-          var target = entry.target;
-          var idx = Number(target.getAttribute("data-page-index"));
+          var node = entry.target;
+          var idx = Number(node.getAttribute("data-page-index"));
+          if (idx < EAGER_PAGE_COUNT) return;
           if (entry.isIntersecting) {
-            if (!realizedIndices[idx]) {
-              var newEl = realizePage(idx);
-              target.replaceWith(newEl);
-              realizedIndices[idx] = true;
-              observer.unobserve(target);
-              observer.observe(newEl);
+            if (node.classList.contains("print-preview-page--placeholder")) {
+              var real = realizePage(idx);
+              node.replaceWith(real);
+              observer.unobserve(node);
+              observer.observe(real);
             }
-          } else if (realizedIndices[idx] && idx >= EAGER_PAGE_COUNT) {
-            var newPh = makePlaceholder(idx);
-            target.replaceWith(newPh);
-            delete realizedIndices[idx];
-            observer.unobserve(target);
-            observer.observe(newPh);
+          } else if (!node.classList.contains("print-preview-page--placeholder")) {
+            var placeholder = placeholderFor(idx);
+            node.replaceWith(placeholder);
+            observer.unobserve(node);
+            observer.observe(placeholder);
           }
         });
       }, {
@@ -5547,9 +5460,8 @@ PH.print = function() {
     pagesResult.pages.forEach(function(pageData, idx) {
       if (!useLazy || idx < EAGER_PAGE_COUNT) {
         shell.appendChild(realizePage(idx));
-        realizedIndices[idx] = true;
       } else {
-        var placeholder = makePlaceholder(idx);
+        var placeholder = placeholderFor(idx);
         shell.appendChild(placeholder);
         observer.observe(placeholder);
       }
@@ -5560,19 +5472,22 @@ PH.print = function() {
   var printJobToken = 0;
   function runPrintJob(blockedRows, opts) {
     var baseGeo = Object.assign({}, DEFAULT_GEO, opts.geo || {});
-    var calibratedGeo0 = resolveGeo(baseGeo, opts.calibration);
+    var calibratedGeo = resolveGeo(baseGeo, opts.calibration);
+    var geometry = paginate.computeRowMm(Object.assign({
+      rowsPerPage: opts.rowsPerPage,
+      orientation: opts.orientation || "portrait"
+    }, calibratedGeo));
     var geometryAssertion = paginate.assertGeometry(Object.assign({
       rowsPerPage: opts.rowsPerPage,
       orientation: opts.orientation || "portrait"
-    }, calibratedGeo0));
+    }, calibratedGeo));
     if (!geometryAssertion.ok && !opts.geometryConfirmed) {
       return {
         geometryInvalid: true,
         geometryErrors: geometryAssertion.errors
       };
     }
-    var prep = preparePrint(blockedRows, opts);
-    var geometry = prep.geometry, calibratedGeo = prep.calibratedGeo, pagesResult = prep.pagesResult;
+    var pagesResult = paginate.buildPagesFromBlocked(blockedRows, opts.rowsPerPage);
     if (pagesResult.pages.length > 200 && !opts.largeConfirmed) {
       return {
         pageCount: pagesResult.pages.length,
@@ -5589,7 +5504,8 @@ PH.print = function() {
     }
     printRoot.innerHTML = "";
     document.body.classList.toggle("print-landscape", opts.orientation === "landscape");
-    paginate.annotatePageTotals(pagesResult, opts.printTotalField || null, {
+    var totalField = opts.printTotalField || null;
+    paginate.annotatePageTotals(pagesResult, totalField, {
       isFiltered: opts.isFiltered,
       hasFilledMoney: opts.hasFilledMoney
     });
@@ -5669,6 +5585,12 @@ PH.exportPlan = function() {
       return acc + r[field];
     }, 0n);
   }
+  function chunkSum(slots, field) {
+    return slots.reduce(function(acc, slot) {
+      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
+      return acc + slot.row[field];
+    }, 0n);
+  }
   function embeddedRows(rows, field, rowsPerPage, labelColumn, carryForward, wantGrand) {
     var pages = paginate.buildPagesFromBlocked(rows, rowsPerPage || 24);
     var out = [];
@@ -5677,7 +5599,7 @@ PH.exportPlan = function() {
       page.rows.forEach(function(slot) {
         if (slot.kind === "data") out.push(slot.row);
       });
-      var pageTotal = paginate.pageRowsTotal(page.rows, field);
+      var pageTotal = chunkSum(page.rows, field);
       var totalRow = {};
       totalRow[labelColumn] = "إجمالي الصفحة " + (idx + 1);
       totalRow[field] = pageTotal;
@@ -5971,8 +5893,6 @@ PH.exportPlan = function() {
 
 window.PH = window.PH || {};
 
-window.PH = window.PH || {};
-
 PH.exporter = function() {
   var cfg = PH.config;
   function slugSpaces(s) {
@@ -6164,31 +6084,6 @@ PH.exporter = function() {
     XLSX.writeFile(wb, fileName);
     return fileName;
   }
-  function runChunkedAsync(items, processItem, finish, opts) {
-    var index = 0;
-    if (opts.onProgress) opts.onProgress(0, items.length);
-    return new Promise(function(resolve, reject) {
-      function next() {
-        if (opts.abortToken && opts.abortToken.cancelled) {
-          reject(new Error("تم الإلغاء"));
-          return;
-        }
-        if (index >= items.length) {
-          finish(resolve, reject);
-          return;
-        }
-        try {
-          processItem(items[index], index);
-          index++;
-          if (opts.onProgress) opts.onProgress(index, items.length);
-          setTimeout(next, 0);
-        } catch (err) {
-          reject(err);
-        }
-      }
-      next();
-    });
-  }
   function exportSingleWorkbook(sheets, opts) {
     var wb = XLSX.utils.book_new();
     wb.Workbook = {
@@ -6197,38 +6092,57 @@ PH.exporter = function() {
       } ]
     };
     var usedNames = [];
-    return runChunkedAsync(sheets, function(sheet) {
-      var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
-      var name = sheetNameFor(sheet.combination, sheet.name, usedNames, sheet.meta && sheet.meta.combined);
-      XLSX.utils.book_append_sheet(wb, ws, name);
-    }, function(resolve, reject) {
-      var isMulti = sheets.length > 1;
-      var fileNameCombination = isMulti ? {
-        budget: null,
-        shift: null,
-        dispense: null
-      } : sheets[0] && sheets[0].combination || {
-        budget: null,
-        shift: null,
-        dispense: null
-      };
-      var descriptor = opts.descriptor;
-      if (isMulti) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-أوراق";
-      var fileName = buildFileName({
-        month: opts.month,
-        reportLabel: opts.reportLabel,
-        combination: fileNameCombination,
-        descriptor,
-        ext: "xlsx"
-      });
-      try {
-        XLSX.writeFile(wb, fileName);
-      } catch (err) {
-        reject(err);
-        return;
+    var index = 0;
+    if (opts.onProgress) opts.onProgress(0, sheets.length);
+    return new Promise(function(resolve, reject) {
+      function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) {
+          reject(new Error("تم الإلغاء"));
+          return;
+        }
+        if (index >= sheets.length) {
+          var isMulti = sheets.length > 1;
+          var fileNameCombination = isMulti ? {
+            budget: null,
+            shift: null,
+            dispense: null
+          } : sheets[0] && sheets[0].combination || {
+            budget: null,
+            shift: null,
+            dispense: null
+          };
+          var descriptor = opts.descriptor;
+          if (isMulti) descriptor = (descriptor ? descriptor + "-" : "") + sheets.length + "-أوراق";
+          var fileName = buildFileName({
+            month: opts.month,
+            reportLabel: opts.reportLabel,
+            combination: fileNameCombination,
+            descriptor,
+            ext: "xlsx"
+          });
+          try {
+            XLSX.writeFile(wb, fileName);
+          } catch (err) {
+            reject(err);
+            return;
+          }
+          resolve(fileName);
+          return;
+        }
+        try {
+          var sheet = sheets[index];
+          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+          var name = sheetNameFor(sheet.combination, sheet.name, usedNames, sheet.meta && sheet.meta.combined);
+          XLSX.utils.book_append_sheet(wb, ws, name);
+          index++;
+          if (opts.onProgress) opts.onProgress(index, sheets.length);
+          setTimeout(next, 0);
+        } catch (err) {
+          reject(err);
+        }
       }
-      resolve(fileName);
-    }, opts);
+      next();
+    });
   }
   function exportZipPerSheet(sheets, opts) {
     var zip = new JSZip;
@@ -6244,39 +6158,58 @@ PH.exporter = function() {
       descriptor: opts.descriptor,
       ext: "zip"
     });
-    return runChunkedAsync(sheets, function(sheet) {
-      var wb = XLSX.utils.book_new();
-      wb.Workbook = {
-        Views: [ {
-          RTL: true
-        } ]
-      };
-      var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
-      XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, [], sheet.meta && sheet.meta.combined));
-      var buf = XLSX.write(wb, {
-        bookType: "xlsx",
-        type: "array"
-      });
-      var name = buildFileName({
-        month: opts.month,
-        reportLabel: sheet.name,
-        combination: sheet.combination,
-        descriptor: opts.descriptor,
-        ext: "xlsx"
-      });
-      name = resolveCollision(name, usedNames);
-      usedNames.push(name);
-      zip.file(name, buf);
-    }, function(resolve, reject) {
-      zip.generateAsync({
-        type: "blob"
-      }, function(meta) {
-        if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent);
-      }).then(function(blob) {
-        downloadBlob(blob, zipName);
-        resolve(zipName);
-      }).catch(reject);
-    }, opts);
+    var index = 0;
+    if (opts.onProgress) opts.onProgress(0, sheets.length);
+    return new Promise(function(resolve, reject) {
+      function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) {
+          reject(new Error("تم الإلغاء"));
+          return;
+        }
+        if (index >= sheets.length) {
+          zip.generateAsync({
+            type: "blob"
+          }, function(meta) {
+            if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent);
+          }).then(function(blob) {
+            downloadBlob(blob, zipName);
+            resolve(zipName);
+          }).catch(reject);
+          return;
+        }
+        try {
+          var sheet = sheets[index];
+          var wb = XLSX.utils.book_new();
+          wb.Workbook = {
+            Views: [ {
+              RTL: true
+            } ]
+          };
+          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+          XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, [], sheet.meta && sheet.meta.combined));
+          var buf = XLSX.write(wb, {
+            bookType: "xlsx",
+            type: "array"
+          });
+          var name = buildFileName({
+            month: opts.month,
+            reportLabel: sheet.name,
+            combination: sheet.combination,
+            descriptor: opts.descriptor,
+            ext: "xlsx"
+          });
+          name = resolveCollision(name, usedNames);
+          usedNames.push(name);
+          zip.file(name, buf);
+          index++;
+          if (opts.onProgress) opts.onProgress(index, sheets.length);
+          setTimeout(next, 0);
+        } catch (err) {
+          reject(err);
+        }
+      }
+      next();
+    });
   }
   function rowsToCsv(rows, columns, separator) {
     var sep = separator || ",";
@@ -6638,8 +6571,81 @@ PH.selftest = function() {
     check(result, store.isBlankCell(boundaryResult.rows[2].group), "boundary-stop-across-book");
     return result;
   }
+  function mulberry32(seed) {
+    return function() {
+      seed |= 0;
+      seed = seed + 1831565813 | 0;
+      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
   function generateFixtureSource(seed, count) {
-    return PH.fixtures.generateFixtureSource(seed, count);
+    var rnd = mulberry32(seed);
+    var drugs = [ {
+      name: "Amaryl 10 T",
+      unit: "10 T"
+    }, {
+      name: "Panadol Extra",
+      unit: "20 T"
+    }, {
+      name: "Augmentin 1g",
+      unit: "14 T"
+    }, {
+      name: "Concor 5mg",
+      unit: "30 T"
+    }, {
+      name: "Zantac Syrup",
+      unit: "150 ML"
+    }, {
+      name: "Ventolin Inhaler",
+      unit: "1 PC"
+    } ];
+    var books = [ "A", "B", "C" ];
+    var rows = [];
+    for (var i = 0; i < count; i++) {
+      var d = drugs[Math.floor(rnd() * drugs.length)];
+      var price = Math.round((5 + rnd() * 200) * cfg.SCALE_PRICE) / cfg.SCALE_PRICE;
+      var dispensed = Math.round(rnd() * 50 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
+      var balance = Math.round(rnd() * 500 * cfg.SCALE_QTY) / cfg.SCALE_QTY;
+      rows.push({
+        budget: "قوى عاملة",
+        shift: "صباحي",
+        dispense: "مجاني",
+        book: books[Math.floor(rnd() * books.length)],
+        serial: i + 1,
+        name: d.name,
+        unit: d.unit,
+        dispensed: rnd() < .05 ? null : dispensed,
+        price,
+        group: null,
+        month: "2026-01",
+        received: null,
+        balance: rnd() < .05 ? null : balance,
+        pharmacy: null,
+        pageNo: null
+      });
+    }
+    for (var t = 0; t < 3; t++) {
+      rows.push({
+        budget: "قوى عاملة",
+        shift: "صباحي",
+        dispense: "مجاني",
+        book: cfg.TOTAL_ROW_MARKER,
+        serial: null,
+        name: "",
+        unit: "",
+        dispensed: null,
+        price: null,
+        group: null,
+        month: null,
+        received: null,
+        balance: null,
+        pharmacy: null,
+        pageNo: null
+      });
+    }
+    return rows;
   }
   function computeExpectedFixture(source) {
     function scaleQtyBigLocal(v) {
@@ -7536,33 +7542,69 @@ PH.selftest = function() {
     return result;
   }
   function runAllWithData(source, expected) {
-    var suites = {
-      blocks: runBlocksInvariants(),
-      reportParity: runReportParity(source, expected),
-      print: runPrintInvariants(),
-      average: runAverageInvariants(source),
-      movingAverage: runMovingAverageInvariants(),
-      fill: runFillInvariants(),
-      regressions: runRegressionInvariants(),
-      exportPlan: runExportPlanInvariants(),
-      columns: runColumnChooserInvariants(),
-      normalize: runNormalizeInvariants(),
-      matrix: runMatrixInvariants(),
-      validate: runValidateInvariants()
+    var runners = {
+      blocks: function() {
+        return runBlocksInvariants();
+      },
+      reportParity: function() {
+        return runReportParity(source, expected);
+      },
+      print: function() {
+        return runPrintInvariants();
+      },
+      average: function() {
+        return runAverageInvariants(source);
+      },
+      movingAverage: function() {
+        return runMovingAverageInvariants();
+      },
+      fill: function() {
+        return runFillInvariants();
+      },
+      regressions: function() {
+        return runRegressionInvariants();
+      },
+      exportPlan: function() {
+        return runExportPlanInvariants();
+      },
+      columns: function() {
+        return runColumnChooserInvariants();
+      },
+      normalize: function() {
+        return runNormalizeInvariants();
+      },
+      matrix: function() {
+        return runMatrixInvariants();
+      },
+      validate: function() {
+        return runValidateInvariants();
+      }
     };
-    var totalPass = 0, totalFail = 0, allFailures = [];
-    Object.keys(suites).forEach(function(k) {
-      totalPass += suites[k].pass;
-      totalFail += suites[k].fail;
-      allFailures = allFailures.concat(suites[k].failures.map(function(f) {
-        return k + ": " + f;
-      }));
-    });
-    return Promise.resolve({
-      suites,
-      totalPass,
-      totalFail,
-      failures: allFailures
+    var suites = {};
+    function yieldToMain() {
+      return new Promise(function(resolve) {
+        setTimeout(resolve, 0);
+      });
+    }
+    return Object.keys(runners).reduce(function(chain, k) {
+      return chain.then(yieldToMain).then(function() {
+        suites[k] = runners[k]();
+      });
+    }, Promise.resolve()).then(function() {
+      var totalPass = 0, totalFail = 0, allFailures = [];
+      Object.keys(suites).forEach(function(k) {
+        totalPass += suites[k].pass;
+        totalFail += suites[k].fail;
+        allFailures = allFailures.concat(suites[k].failures.map(function(f) {
+          return k + ": " + f;
+        }));
+      });
+      return {
+        suites,
+        totalPass,
+        totalFail,
+        failures: allFailures
+      };
     });
   }
   return {
@@ -7743,7 +7785,7 @@ PH.app = function() {
       for (var k in fields) sanitized[k] = PH.settings.sanitize(scopeKey, k, fields[k]);
     } else if (scopeName === "global") {
       Object.keys(fields).forEach(function(k) {
-        if (k === "rowsPerPage") sanitized.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(fields.rowsPerPage) !== -1 ? fields.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0]; else if (k === "showPageMarkers") sanitized.showPageMarkers = typeof fields.showPageMarkers === "boolean" ? fields.showPageMarkers : true; else if (k === "printOrientation") sanitized.printOrientation = cfg.PRINT_ORIENTATIONS.indexOf(fields.printOrientation) !== -1 ? fields.printOrientation : cfg.PRINT_ORIENTATIONS[0]; else sanitized[k] = fields[k];
+        if (k === "rowsPerPage") sanitized.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(fields.rowsPerPage) !== -1 ? fields.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0]; else if (k === "showPageMarkers") sanitized.showPageMarkers = typeof fields.showPageMarkers === "boolean" ? fields.showPageMarkers : true; else if (k === "printOrientation") sanitized.printOrientation = cfg.PRINT_ORIENTATIONS.indexOf(fields.printOrientation) !== -1 ? fields.printOrientation : cfg.PRINT_ORIENTATIONS[0]; else if (k === "applyToPrintExport") sanitized.applyToPrintExport = typeof fields.applyToPrintExport === "boolean" ? fields.applyToPrintExport : true; else sanitized[k] = fields[k];
       });
     } else {
       sanitized = fields;
@@ -7967,7 +8009,9 @@ PH.app = function() {
       }, [ text("~" + pageCount + " صفحة عند الطباعة") ]));
       pageSec.appendChild(switchRow("تطبيق الفرز/التصفية/البحث الحالي على الطباعة والتصدير", !!state.applyToPrintExport, function(v) {
         state.applyToPrintExport = v;
-        store.saveSettings("global", "applyToPrintExport", v).catch(function() {});
+        store.saveSettingsMulti("global", {
+          applyToPrintExport: v
+        }).catch(function() {});
         onSettingsMutated();
       }));
       var calibrateEntryBtn = el("button", {
@@ -8125,9 +8169,24 @@ PH.app = function() {
     buildBody();
     registerDialog(overlay);
   }
+  var activeToasts = Object.create(null);
   function showToast(message, withUndo) {
     var stack = $("toast-stack");
     if (!stack) return;
+    if (!withUndo && activeToasts[message]) {
+      var existing = activeToasts[message];
+      clearTimeout(existing.dismissTimer);
+      clearTimeout(existing.removeTimer);
+      existing.el.classList.remove("is-leaving");
+      existing.dismissTimer = setTimeout(function() {
+        existing.el.classList.add("is-leaving");
+        existing.removeTimer = setTimeout(function() {
+          existing.el.remove();
+          if (activeToasts[message] === existing) delete activeToasts[message];
+        }, 250);
+      }, 4e3);
+      return;
+    }
     var toast = el("div", {
       class: "toast"
     }, [ text(message) ]);
@@ -8147,9 +8206,16 @@ PH.app = function() {
       toast.appendChild(undoBtn);
     }
     stack.appendChild(toast);
-    setTimeout(function() {
+    var entry = {
+      el: toast
+    };
+    if (!withUndo) activeToasts[message] = entry;
+    entry.dismissTimer = setTimeout(function() {
       toast.classList.add("is-leaving");
-      setTimeout(function() { toast.remove(); }, 250);
+      entry.removeTimer = setTimeout(function() {
+        toast.remove();
+        if (activeToasts[message] === entry) delete activeToasts[message];
+      }, 250);
     }, 4e3);
   }
   function computeSheetFor(reportId, combination) {
@@ -8218,7 +8284,7 @@ PH.app = function() {
       var disabled = isDisabled(rep);
       var tab = el("div", {
         class: "report-tab-h",
-        id: "report-tab-" + rep.id,
+        id: "tab-" + rep.id,
         role: "tab",
         "aria-selected": state.activeReportId === rep.id ? "true" : "false",
         "aria-disabled": disabled ? "true" : "false",
@@ -8264,7 +8330,7 @@ PH.app = function() {
       container.appendChild(tab);
     });
     var panel = document.getElementById("main-content");
-    if (panel) panel.setAttribute("aria-labelledby", "report-tab-" + state.activeReportId);
+    if (panel) panel.setAttribute("aria-labelledby", "tab-" + state.activeReportId);
   }
   var overflowMenuOpen = false;
   function refreshScope() {
@@ -8577,7 +8643,9 @@ PH.app = function() {
     function onReposition() {
       positionPopoverNear(pop, anchorEl, opts.align);
     }
+    var cancelled = false;
     setTimeout(function() {
+      if (cancelled) return;
       document.addEventListener("click", onDocClick);
       document.addEventListener("keydown", onDocKey);
       window.addEventListener("resize", onReposition);
@@ -8587,6 +8655,7 @@ PH.app = function() {
       el: pop,
       anchor: anchorEl,
       cleanup: function() {
+        cancelled = true;
         document.removeEventListener("click", onDocClick);
         document.removeEventListener("keydown", onDocKey);
         window.removeEventListener("resize", onReposition);
@@ -8900,7 +8969,9 @@ PH.app = function() {
       }, [ text(state.applyToPrintExport ? "مصفّى — يُطبَّق على الإخراج" : "مصفّى — لا يُطبَّق") ]);
       filterChip.addEventListener("click", function() {
         state.applyToPrintExport = !state.applyToPrintExport;
-        store.saveSettings("global", "applyToPrintExport", state.applyToPrintExport).catch(function() {});
+        store.saveSettingsMulti("global", {
+          applyToPrintExport: state.applyToPrintExport
+        }).catch(function() {});
         render();
       });
       toolbar.appendChild(filterChip);
@@ -9872,6 +9943,9 @@ PH.app = function() {
         class: "fs-body",
         style: "color:var(--err);"
       }, [ text(String(s.problemRowCount) + " صف به مشكلة") ]));
+      if (s.duplicateCount) summaryRow.appendChild(el("div", {
+        class: "fs-caption text-soft"
+      }, [ text(String(s.duplicateCount) + " صف مكرر") ]));
       if (Object.keys(wiz.excludedRowIndexes).length) summaryRow.appendChild(el("div", {
         class: "fs-caption text-soft"
       }, [ text(Object.keys(wiz.excludedRowIndexes).length + " صف مستبعد") ]));
@@ -9952,7 +10026,7 @@ PH.app = function() {
   }
   function loadSampleData() {
     function proceed() {
-      var source = window.PH_FIXTURES && window.PH_FIXTURES.source || PH.fixtures.generateFixtureSource(20260701, 40);
+      var source = window.PH_FIXTURES && window.PH_FIXTURES.source || PH.selftest.generateFixtureSource(20260701, 40);
       store.setSourceRows(source.slice(0, 40), "تحميل بيانات تجريبية", true);
       render();
     }
@@ -10681,11 +10755,11 @@ PH.app = function() {
     footer.appendChild(footerSummary);
     footer.appendChild(footerActions);
     panel.appendChild(footer);
-    var progressFill = el("div", {
+    var progressFillEl = el("div", {
       class: "progress-bar__fill",
       style: "width:0%;"
     });
-    var progressCaption = el("div", {
+    var progressCaptionEl = el("div", {
       class: "fs-caption text-soft"
     }, [ text("0 / 0") ]);
     var progressCancelBtn = el("button", {
@@ -10698,7 +10772,11 @@ PH.app = function() {
       class: "fs-body"
     }, [ text("جارٍ التصدير…") ]), el("div", {
       class: "progress-bar"
-    }, [ progressFill ]), progressCaption, progressCancelBtn ]);
+    }, [ progressFillEl ]), progressCaptionEl, progressCancelBtn ]);
+    var currentAbortToken = null;
+    progressCancelBtn.addEventListener("click", function() {
+      if (currentAbortToken) currentAbortToken.cancelled = true;
+    });
     panel.appendChild(progressWrap);
     overlay.appendChild(panel);
     function buildBody() {
@@ -11122,12 +11200,7 @@ PH.app = function() {
       body.style.display = "none";
       footer.style.display = "none";
       progressWrap.style.display = "flex";
-      var fill = progressFill;
-      var caption = progressCaption;
-      var cancelProgressBtn = progressCancelBtn;
-      cancelProgressBtn.addEventListener("click", function() {
-        abortToken.cancelled = true;
-      });
+      currentAbortToken = abortToken;
       var writer = plan.layout === "zip" ? PH.exporter.exportZipPerSheet : PH.exporter.exportSingleWorkbook;
       writer(sheets, {
         month: exportMonth,
@@ -11135,8 +11208,8 @@ PH.app = function() {
         abortToken,
         onProgress: function(done, total, percent) {
           var pct = percent !== undefined ? percent : total ? done / total * 100 : 0;
-          fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-          caption.textContent = percent !== undefined && done === total ? "ضغط الملف… " + Math.round(pct) + "%" : done + " / " + total;
+          progressFillEl.style.width = Math.max(0, Math.min(100, pct)) + "%";
+          progressCaptionEl.textContent = percent !== undefined ? "ضغط الملف… " + Math.round(percent) + "%" : done + " / " + total;
         }
       }).then(function(name) {
         store.saveSettings("meta", "exportPlan", plan).catch(function() {});
@@ -11206,10 +11279,10 @@ PH.app = function() {
     Promise.all([ store.loadPersisted(), store.getAllSettingsScopes() ]).then(function(results) {
       var scopes = results[1];
       state.settingsOverrides.global = scopes.global;
+      state.applyToPrintExport = typeof scopes.global.applyToPrintExport === "boolean" ? scopes.global.applyToPrintExport : true;
       state.settingsOverrides.report = scopes.report;
       state.settingsOverrides.linked = scopes.linked;
       state.hiddenColumns = scopes.hiddenColumns || {};
-      if (scopes.global && scopes.global.applyToPrintExport !== undefined) state.applyToPrintExport = scopes.global.applyToPrintExport;
       migrateSheetScopeSettings(scopes.sheet);
       render();
     }).catch(function() {
@@ -11276,6 +11349,9 @@ PH.app = function() {
         e.preventDefault();
         e.returnValue = "";
       }
+    });
+    document.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "hidden") store.flushAutosave();
     });
     if (/[?&]selftest=1/.test(window.location.search)) runSelfTestOverlay();
   }
