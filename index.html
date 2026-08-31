@@ -5269,7 +5269,7 @@ PH.print = function() {
     };
     return metrics;
   }
-  function buildPageElement(pageData, geo, columns, reportLabel, orientation, marginsMm) {
+  function buildPageElement(pageData, geo, columns, reportLabel, orientation, marginsMm, totalField) {
     var isLandscape = orientation === "landscape";
     var pageEl = el("div", {
       class: "page" + (isLandscape ? " print-landscape" : "")
@@ -5360,14 +5360,15 @@ PH.print = function() {
       grid.appendChild(rowEl);
     });
     var totalsParts = [];
+    var totalsDecimals = cfg.decimalsForColumn(totalField || "value");
     if (pageData.pageTotal !== null && pageData.pageTotal !== undefined) {
-      totalsParts.push("إجمالي الصفحة: " + PH.blocks.formatScaled(pageData.pageTotal, cfg.decimalsForColumn("value"), true));
+      totalsParts.push("إجمالي الصفحة: " + PH.blocks.formatScaled(pageData.pageTotal, totalsDecimals, true));
     }
     if (pageData.carryForward !== null && pageData.carryForward !== undefined && pageData.pageNumber > 1) {
-      totalsParts.push("منقول من الصفحة السابقة: " + PH.blocks.formatScaled(pageData.carryForward, cfg.decimalsForColumn("value"), true));
+      totalsParts.push("منقول من الصفحة السابقة: " + PH.blocks.formatScaled(pageData.carryForward, totalsDecimals, true));
     }
     if (pageData.grandTotal !== null && pageData.grandTotal !== undefined && pageData.isLastPage) {
-      totalsParts.push("الإجمالي الكلي: " + PH.blocks.formatScaled(pageData.grandTotal, cfg.decimalsForColumn("value"), true));
+      totalsParts.push("الإجمالي الكلي: " + PH.blocks.formatScaled(pageData.grandTotal, totalsDecimals, true));
     }
     var totals = el("div", {
       class: "page-totals"
@@ -5414,7 +5415,7 @@ PH.print = function() {
     });
     function realizePage(idx) {
       var pageData = pagesResult.pages[idx];
-      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo);
+      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo, totalField);
       var wrapper = el("div", {
         class: "print-preview-page",
         "data-page-index": String(idx)
@@ -5511,7 +5512,7 @@ PH.print = function() {
       hasFilledMoney: opts.hasFilledMoney
     });
     pagesResult.pages.forEach(function(pageData) {
-      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, opts.orientation, calibratedGeo);
+      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, opts.orientation, calibratedGeo, totalField);
       printRoot.appendChild(pageEl);
     });
     var previousTitle = document.title;
