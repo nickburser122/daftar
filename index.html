@@ -4872,6 +4872,7 @@ PH.viewTable = function() {
     });
     scroller.addEventListener("scroll", function() {
       window.requestAnimationFrame(renderWindow);
+      headerWrap.scrollLeft = scroller.scrollLeft;
     });
     function handleFillShortcut(e) {
       if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
@@ -5578,6 +5579,23 @@ PH.exportPlan = function() {
   var paginate = PH.paginate;
   var cfg = PH.config;
   var util = PH.util;
+  var VALID_SCOPES = {
+    row: true,
+    page: true,
+    block: true,
+    group: true,
+    sheet: true
+  };
+  var VALID_MODES = {
+    cumulative: true,
+    closing: true,
+    carry: true
+  };
+  var VALID_EMITS = {
+    column: true,
+    row: true,
+    both: true
+  };
   function sumField(rows, field) {
     if (!field) return 0n;
     return rows.reduce(function(acc, r) {
@@ -5585,120 +5603,154 @@ PH.exportPlan = function() {
       return acc + r[field];
     }, 0n);
   }
-  function chunkSum(slots, field) {
-    return slots.reduce(function(acc, slot) {
-      if (!slot.row || slot.row.isGrandTotal || slot.row.isSubtotal || typeof slot.row[field] !== "bigint") return acc;
-      return acc + slot.row[field];
-    }, 0n);
-  }
-  function embeddedRows(rows, field, rowsPerPage, labelColumn, carryForward, wantGrand) {
-    var pages = paginate.buildPagesFromBlocked(rows, rowsPerPage || 24);
-    var out = [];
-    var carry = 0n;
-    pages.pages.forEach(function(page, idx) {
-      page.rows.forEach(function(slot) {
-        if (slot.kind === "data") out.push(slot.row);
-      });
-      var pageTotal = chunkSum(page.rows, field);
-      var totalRow = {};
-      totalRow[labelColumn] = "إجمالي الصفحة " + (idx + 1);
-      totalRow[field] = pageTotal;
-      out.push(totalRow);
-      out.push({});
-      carry += pageTotal;
-      if (carryForward && idx < pages.pages.length - 1) {
-        var carryRow = {};
-        carryRow[labelColumn] = "المنقول من الصفحة السابقة";
-        carryRow[field] = carry;
-        out.push(carryRow);
-      }
-    });
-    if (wantGrand) {
-      var grandRow = {};
-      grandRow[labelColumn] = "الإجمالي الكلي";
-      grandRow[field] = carry;
-      out.push(grandRow);
+  function legacyKindToLayer(raw) {
+    if (raw.kind === "cumsum") {
+      return {
+        scope: "block",
+        mode: raw.basis === "running" ? "carry" : "closing"
+      };
     }
-    return out;
+    if (raw.kind === "sum") {
+      return {
+        scope: "sheet",
+        mode: "cumulative"
+      };
+    }
+    if (raw.kind === "group") {
+      return {
+        scope: "group",
+        mode: "closing",
+        resetOn: raw.groupBy || null
+      };
+    }
+    return null;
+  }
+  function normalizeLayer(raw) {
+    if (!raw) return null;
+    var base;
+    if (raw.scope || raw.mode) {
+      base = {
+        scope: raw.scope,
+        mode: raw.mode,
+        resetOn: raw.resetOn || null
+      };
+    } else if (raw.kind !== undefined) {
+      base = legacyKindToLayer(raw);
+      if (!base) return null;
+    } else {
+      return null;
+    }
+    if (!VALID_SCOPES[base.scope] || !VALID_MODES[base.mode]) return null;
+    var emit = VALID_EMITS[raw.emit] ? raw.emit : "column";
+    return {
+      scope: base.scope,
+      mode: base.mode,
+      field: raw.field || null,
+      emit,
+      resetOn: base.scope === "group" ? base.resetOn || null : null,
+      label: raw.label || null,
+      key: raw.key || null
+    };
   }
   function normalizeTotals(totalsOpts) {
     var opts = totalsOpts || {};
-    return {
-      grandTotal: opts.grandTotal !== false,
-      embedded: {
-        enabled: !!(opts.embedded && opts.embedded.enabled),
-        carryForward: !opts.embedded || opts.embedded.carryForward !== false
-      },
-      columns: (opts.columns || []).slice(0, 2)
-    };
-  }
-  function defaultKeyFor(kind, slotIndex) {
-    if (kind === "cumsum") return slotIndex === 0 ? "cumulative" : "cumulative2";
-    if (kind === "sum") return slotIndex === 0 ? "sum1" : "sum2";
-    if (kind === "group") return slotIndex === 0 ? "group1" : "group2";
-    return "total" + (slotIndex + 1);
-  }
-  function computeColumnSeries(rows, field, settings, colCfg) {
-    if (colCfg.kind === "cumsum") {
-      var basis = colCfg.basis === "running" ? "running" : "block";
-      var blocked = blk.applyBlocks(rows, {
-        blockSize: settings && settings.blockSize,
-        cumulativeMode: basis,
-        cumulativeAgg: settings && settings.cumulativeAgg || "sum",
-        showPartialBlockTotal: !settings || settings.showPartialBlockTotal !== false,
-        valueField: field
+    var grandTotal = opts.grandTotal !== false;
+    var rawLayers = [];
+    if (Array.isArray(opts.layers)) {
+      rawLayers = rawLayers.concat(opts.layers);
+    } else {
+      (opts.columns || []).forEach(function(c) {
+        rawLayers.push(c);
       });
-      return blocked.map(function(r) {
-        return r.cumulative;
-      });
-    }
-    if (colCfg.kind === "sum") {
-      var running = 0n;
-      return rows.map(function(r) {
-        var v = typeof r[field] === "bigint" ? r[field] : 0n;
-        running += v;
-        return running;
-      });
-    }
-    if (colCfg.kind === "group") {
-      var groupBy = colCfg.groupBy;
-      var out = new Array(rows.length);
-      for (var z = 0; z < out.length; z++) out[z] = null;
-      if (!groupBy || !rows.length) return out;
-      var runStart = 0;
-      for (var i = 1; i <= rows.length; i++) {
-        var boundary = i === rows.length || rows[i][groupBy] !== rows[runStart][groupBy];
-        if (boundary) {
-          var sum = 0n;
-          for (var j = runStart; j < i; j++) {
-            var v = rows[j][field];
-            sum += typeof v === "bigint" ? v : 0n;
-          }
-          out[i - 1] = sum;
-          runStart = i;
+      if (opts.embedded && opts.embedded.enabled) {
+        rawLayers.push({
+          scope: "page",
+          mode: "closing",
+          emit: "row"
+        });
+        if (opts.embedded.carryForward !== false) {
+          rawLayers.push({
+            scope: "page",
+            mode: "carry",
+            emit: "row"
+          });
         }
       }
-      return out;
     }
-    return rows.map(function() {
-      return null;
+    var layers = [];
+    var primaryField = null;
+    rawLayers.forEach(function(raw) {
+      var n = normalizeLayer(raw);
+      if (!n) return;
+      layers.push(n);
+      if (!primaryField && n.field) primaryField = n.field;
+    });
+    return {
+      grandTotal,
+      layers,
+      primaryField
+    };
+  }
+  function migrateTotals(old) {
+    if (!old) return normalizeTotals(null);
+    if (old.columns || old.layers) return normalizeTotals(old);
+    var columns = [];
+    if (old.cumulative === "column") {
+      columns.push({
+        key: "cumulative",
+        kind: "cumsum",
+        field: null,
+        basis: old.basis === "running" ? "running" : "block",
+        label: null
+      });
+    }
+    return normalizeTotals({
+      grandTotal: old.grandTotal !== false,
+      embedded: {
+        enabled: old.cumulative === "embedded",
+        carryForward: old.carryForward !== false
+      },
+      columns
     });
   }
-  function configSignature(colCfg) {
-    return [ colCfg.kind, colCfg.field || "", colCfg.basis || "", colCfg.groupBy || "" ].join("");
+  function layerKey(layer) {
+    if (layer.key) return layer.key;
+    return "tot__" + layer.scope + "__" + layer.mode + "__" + (layer.field || "") + (layer.resetOn ? "__" + layer.resetOn : "");
   }
-  function resolveColumnKeys(columnsConfig, reportColumns) {
+  var MODE_LABELS_AR = {
+    cumulative: "تراكمي",
+    closing: "إجمالي",
+    carry: "منقول تراكمي"
+  };
+  var SCOPE_LABELS_AR = {
+    row: "لكل صف",
+    page: "لكل صفحة",
+    block: "لكل كتلة",
+    group: "لكل مجموعة",
+    sheet: "للورقة كاملة"
+  };
+  function layerLabel(layer) {
+    if (layer.label) return layer.label;
+    var fieldLabel = cfg.COLUMN_LABELS[layer.field] || layer.field || "";
+    return [ MODE_LABELS_AR[layer.mode] || layer.mode, fieldLabel, SCOPE_LABELS_AR[layer.scope] || layer.scope ].filter(Boolean).join(" · ");
+  }
+  function configSignature(raw) {
+    var n = normalizeLayer(raw);
+    if (!n) return "invalid";
+    return [ n.scope, n.mode, n.field || "", n.resetOn || "", n.emit ].join("|");
+  }
+  function resolveColumnKeys(layers, reportColumns) {
     var resolved = [];
     var seenSignatures = {};
     var usedKeys = {};
     reportColumns.forEach(function(c) {
       usedKeys[c] = "report";
     });
-    columnsConfig.forEach(function(colCfg, idx) {
-      var sig = configSignature(colCfg);
+    layers.forEach(function(layer, idx) {
+      var sig = configSignature(layer);
       if (seenSignatures[sig]) return;
       seenSignatures[sig] = true;
-      var desired = colCfg.key || defaultKeyFor(colCfg.kind, idx);
+      var desired = layerKey(layer);
       var key = desired;
       var suffix = 2;
       while (usedKeys[key]) {
@@ -5707,35 +5759,166 @@ PH.exportPlan = function() {
       }
       usedKeys[key] = "claimed";
       resolved.push({
-        cfg: colCfg,
+        cfg: layer,
         idx,
         key
       });
     });
     return resolved;
   }
-  function applyTotalsColumns(rows, reportColumns, printTotalField, settings, columnsConfig) {
-    if (!columnsConfig.length || !printTotalField) return {
-      rows: rows.slice(),
-      keys: [],
-      labels: {}
-    };
-    var resolved = resolveColumnKeys(columnsConfig, reportColumns);
+  function resolveLayerField(layer, totalField, primaryField) {
+    return layer.field || primaryField || totalField || null;
+  }
+  function unitIndices(rows, layer, settings) {
+    var n = rows.length;
+    var out = new Array(n);
+    if (layer.scope === "row") {
+      for (var i = 0; i < n; i++) out[i] = i;
+    } else if (layer.scope === "page") {
+      var rpp = settings && settings.rowsPerPage || 24;
+      for (var i2 = 0; i2 < n; i2++) out[i2] = Math.floor(i2 / rpp);
+    } else if (layer.scope === "block") {
+      var bs = settings && settings.blockSize || settings && settings.rowsPerPage || 24;
+      for (var i3 = 0; i3 < n; i3++) out[i3] = Math.floor(i3 / bs);
+    } else if (layer.scope === "group") {
+      var resetOn = layer.resetOn;
+      var unitIdx = 0, prevNorm = null, hasPrev = false;
+      for (var i4 = 0; i4 < n; i4++) {
+        if (!resetOn) {
+          out[i4] = 0;
+          continue;
+        }
+        var raw = rows[i4][resetOn];
+        var normVal = PH.normalize.arabicNormalize(raw === null || raw === undefined ? "" : String(raw));
+        if (hasPrev && normVal !== prevNorm) unitIdx++;
+        out[i4] = unitIdx;
+        prevNorm = normVal;
+        hasPrev = true;
+      }
+    } else {
+      for (var i5 = 0; i5 < n; i5++) out[i5] = 0;
+    }
+    return out;
+  }
+  function computeLayerSeries(rows, layer, settings) {
+    var units = unitIndices(rows, layer, settings);
+    var out = new Array(rows.length);
+    var unitAcc = 0n, running = 0n;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var raw = row[layer.field];
+      var v = row.isGrandTotal || row.isSubtotal || typeof raw !== "bigint" ? 0n : raw;
+      unitAcc += v;
+      running += v;
+      var isEnd = i === rows.length - 1 || units[i + 1] !== units[i];
+      if (layer.mode === "cumulative") out[i] = unitAcc; else if (layer.mode === "closing") out[i] = isEnd ? unitAcc : null; else out[i] = isEnd ? running : null;
+      if (isEnd) unitAcc = 0n;
+    }
+    return out;
+  }
+  function applyTotalsColumns(rows, resolved, totalField, primaryField, settings) {
     var out = rows.map(util.shallowCopy);
     var keys = [];
-    var labels = {};
+    var labelPairs = [];
+    var decimalPairs = [];
     resolved.forEach(function(r) {
-      var field = r.cfg.field || printTotalField;
-      var series = computeColumnSeries(rows, field, settings, r.cfg);
-      for (var i = 0; i < out.length; i++) out[i][r.key] = series[i];
-      keys.push(r.key);
-      if (r.cfg.label) labels[r.key] = r.cfg.label;
+      var field = resolveLayerField(r.cfg, totalField, primaryField);
+      if (!field) return;
+      var effectiveLayer = {
+        scope: r.cfg.scope,
+        mode: r.cfg.mode,
+        field,
+        resetOn: r.cfg.resetOn
+      };
+      var series = computeLayerSeries(rows, effectiveLayer, settings);
+      r.series = series;
+      r.resolvedField = field;
+      if (r.cfg.emit === "column" || r.cfg.emit === "both") {
+        for (var i = 0; i < out.length; i++) out[i][r.key] = series[i];
+        keys.push(r.key);
+        labelPairs.push([ r.key, layerLabel({
+          scope: r.cfg.scope,
+          mode: r.cfg.mode,
+          field,
+          label: r.cfg.label
+        }) ]);
+        decimalPairs.push([ r.key, cfg.decimalsForColumn(field) ]);
+      }
+    });
+    var labels = {};
+    labelPairs.forEach(function(pair) {
+      labels[pair[0]] = pair[1];
+    });
+    var decimals = {};
+    decimalPairs.forEach(function(pair) {
+      decimals[pair[0]] = pair[1];
     });
     return {
       rows: out,
+      decimals,
       keys,
       labels
     };
+  }
+  function rowLabelFor(layer, unitOrdinal) {
+    var scopeNoun = {
+      page: "الصفحة",
+      block: "الكتلة",
+      group: "المجموعة",
+      sheet: "الورقة",
+      row: "الصف"
+    }[layer.scope] || "الوحدة";
+    if (layer.mode === "carry") {
+      return layer.scope === "page" ? "المنقول من الصفحة السابقة" : "منقول من " + scopeNoun + " السابقة";
+    }
+    return "إجمالي " + scopeNoun + (layer.scope !== "sheet" ? " " + unitOrdinal : "");
+  }
+  function emitRowLayers(rows, rowLayers, settings, labelColumn) {
+    var n = rows.length;
+    rowLayers.forEach(function(rl) {
+      rl.units = unitIndices(rows, rl.cfg, settings);
+    });
+    var closingLayers = rowLayers.filter(function(rl) {
+      return rl.cfg.mode !== "carry";
+    });
+    var carryLayers = rowLayers.filter(function(rl) {
+      return rl.cfg.mode === "carry";
+    });
+    var out = [];
+    function makeRow(rl, i) {
+      var rowObj = {
+        __totalsRow: true
+      };
+      rowObj[labelColumn] = rowLabelFor(rl.cfg, rl.units[i] + 1);
+      rowObj[rl.resolvedField] = rl.series[i];
+      if (rl.cfg.emit === "both" && rl.key !== rl.resolvedField) rowObj[rl.key] = rl.series[i];
+      return rowObj;
+    }
+    for (var i = 0; i < n; i++) {
+      out.push(rows[i]);
+      var closingHits = closingLayers.filter(function(rl) {
+        return rl.series[i] !== null && rl.series[i] !== undefined;
+      });
+      var carryHits = i === n - 1 ? [] : carryLayers.filter(function(rl) {
+        return rl.series[i] !== null && rl.series[i] !== undefined;
+      });
+      closingHits.forEach(function(rl) {
+        out.push(makeRow(rl, i));
+      });
+      if (closingHits.length || carryHits.length) out.push({
+        __totalsRow: true
+      });
+      carryHits.forEach(function(rl) {
+        out.push(makeRow(rl, i));
+      });
+    }
+    return out;
+  }
+  function firstNonNumericColumn(columns) {
+    for (var i = 0; i < columns.length; i++) {
+      if (!cfg.isNumericColumn(columns[i])) return columns[i];
+    }
+    return columns[0];
   }
   function totalsRowsFor(rows, totalField, settings, totalsOpts, labelColumn, reportColumns) {
     var norm = normalizeTotals(totalsOpts);
@@ -5743,20 +5926,20 @@ PH.exportPlan = function() {
     var hasBaked = rows.some(function(r) {
       return r.isGrandTotal;
     });
-    var grandField = norm.columns.length && (norm.columns[0].field || totalField) || totalField;
-    var withColumns = applyTotalsColumns(rows, reportColumns, totalField, settings, norm.columns);
+    var resolved = resolveColumnKeys(norm.layers, reportColumns);
+    var withColumns = applyTotalsColumns(rows, resolved, totalField, norm.primaryField, settings);
     var out = withColumns.rows;
-    if (norm.embedded.enabled && totalField) {
-      var rowsPerPage = settings && settings.rowsPerPage || 24;
-      out = embeddedRows(out, grandField, rowsPerPage, labelColumn, norm.embedded.carryForward, wantGrand && !hasBaked);
-      return {
-        rows: out,
-        extraColumns: withColumns.keys,
-        columnLabels: withColumns.labels
-      };
+    var grandField = norm.primaryField || totalField || null;
+    var rowLayers = resolved.filter(function(r) {
+      return (r.cfg.emit === "row" || r.cfg.emit === "both") && r.resolvedField;
+    });
+    if (rowLayers.length) {
+      out = emitRowLayers(out, rowLayers, settings, labelColumn);
     }
-    if (wantGrand && totalField && !hasBaked) {
-      var totalRow = {};
+    if (wantGrand && grandField && !hasBaked) {
+      var totalRow = {
+        __totalsRow: true
+      };
       totalRow[labelColumn] = "الإجمالي الكلي";
       totalRow[grandField] = sumField(rows, grandField);
       out = out.concat([ totalRow ]);
@@ -5764,20 +5947,27 @@ PH.exportPlan = function() {
     return {
       rows: out,
       extraColumns: withColumns.keys,
-      columnLabels: withColumns.labels
+      columnLabels: withColumns.labels,
+      columnDecimals: withColumns.decimals
     };
   }
   function buildSingleSheet(entry, plan) {
-    var labelColumn = entry.columns[0];
+    var labelColumn = firstNonNumericColumn(entry.columns);
     var result = totalsRowsFor(entry.rows, entry.printTotalField, entry.settings, plan.totals, labelColumn, entry.columns);
+    var hidden = entry.hiddenColumns || [];
     var columns = entry.columns.concat(result.extraColumns.filter(function(k) {
-      return entry.columns.indexOf(k) === -1;
+      return entry.columns.indexOf(k) === -1 && hidden.indexOf(k) === -1;
     }));
+    var moneyColumns = result.extraColumns.filter(function(k) {
+      return columns.indexOf(k) !== -1;
+    });
     return {
       name: entry.reportLabel,
       columns,
       rows: result.rows,
       columnLabels: result.columnLabels,
+      columnDecimals: result.columnDecimals,
+      moneyColumns,
       meta: {
         reportId: entry.reportId,
         sliceKey: entry.sliceKey,
@@ -5787,16 +5977,16 @@ PH.exportPlan = function() {
   }
   function buildCombinedSheet(reportId, group, plan) {
     var first = group[0];
-    var labelColumn = first.columns[0];
+    var labelColumn = firstNonNumericColumn(first.columns);
     var norm = normalizeTotals(plan.totals);
     var sliceTotals = {
       grandTotal: false,
-      embedded: norm.embedded,
-      columns: norm.columns
+      layers: norm.layers
     };
-    var grandField = norm.columns.length && (norm.columns[0].field || first.printTotalField) || first.printTotalField;
+    var grandField = norm.primaryField || first.printTotalField || null;
     var extraColsSeen = [];
     var columnLabels = {};
+    var columnDecimals = {};
     var allRows = [];
     var overall = 0n;
     group.forEach(function(entry) {
@@ -5806,9 +5996,10 @@ PH.exportPlan = function() {
         if (extraColsSeen.indexOf(k) === -1) extraColsSeen.push(k);
       });
       for (var lk in sliceResult.columnLabels) columnLabels[lk] = sliceResult.columnLabels[lk];
+      for (var dk in sliceResult.columnDecimals) columnDecimals[dk] = sliceResult.columnDecimals[dk];
       var dims = entry.combination || {};
       sliceResult.rows.forEach(function(r) {
-        var withDims = {
+        var withDims = r.__totalsRow ? {} : {
           budget: dims.budget,
           shift: dims.shift,
           dispense: dims.dispense
@@ -5817,12 +6008,14 @@ PH.exportPlan = function() {
         allRows.push(withDims);
       });
     });
+    var hidden = first.hiddenColumns || [];
     var baseColumns = first.columns.concat(extraColsSeen.filter(function(k) {
-      return first.columns.indexOf(k) === -1;
+      return first.columns.indexOf(k) === -1 && hidden.indexOf(k) === -1;
     }));
     var columns = [ "budget", "shift", "dispense" ].concat(baseColumns);
-    if (norm.grandTotal && first.printTotalField) {
+    if (norm.grandTotal && grandField) {
       var grandRow = {
+        __totalsRow: true,
         budget: "الإجمالي الكلي",
         shift: "",
         dispense: ""
@@ -5830,11 +6023,15 @@ PH.exportPlan = function() {
       grandRow[grandField] = overall;
       allRows.push(grandRow);
     }
+    var moneyColumns = extraColsSeen.filter(function(k) {
+      return columns.indexOf(k) !== -1;
+    });
     return {
       name: first.reportLabel,
       columns,
       rows: allRows,
       columnLabels,
+      moneyColumns,
       meta: {
         reportId,
         combined: true
@@ -5860,34 +6057,35 @@ PH.exportPlan = function() {
     });
     return out;
   }
-  function migrateTotals(old) {
-    if (!old) return normalizeTotals(null);
-    if (old.columns) return normalizeTotals(old);
-    var columns = [];
-    if (old.cumulative === "column") {
-      columns.push({
-        key: "cumulative",
-        kind: "cumsum",
-        field: null,
-        basis: old.basis === "running" ? "running" : "block",
-        label: null
-      });
-    }
-    return normalizeTotals({
-      grandTotal: old.grandTotal !== false,
-      embedded: {
-        enabled: old.cumulative === "embedded",
-        carryForward: old.carryForward !== false
-      },
-      columns
-    });
+  var MODE_SLUG = {
+    cumulative: "تراكمي",
+    closing: "ختامي",
+    carry: "منقول"
+  };
+  var SCOPE_SLUG = {
+    row: "صف",
+    page: "صفحة",
+    block: "كتلة",
+    group: "مجموعة",
+    sheet: "ورقة"
+  };
+  function descriptorForLayers(layers) {
+    if (!layers || !layers.length) return "";
+    return layers.map(function(l) {
+      return (MODE_SLUG[l.mode] || l.mode) + "-" + (SCOPE_SLUG[l.scope] || l.scope);
+    }).join("+");
   }
   return {
     buildSheets,
     normalizeTotals,
     migrateTotals,
-    defaultKeyFor,
-    configSignature
+    layerKey,
+    layerLabel,
+    configSignature,
+    unitIndices,
+    computeLayerSeries,
+    descriptorForLayers,
+    resolveColumnKeys
   };
 }();
 
@@ -5939,8 +6137,9 @@ PH.exporter = function() {
     } while (existingNames.indexOf(candidate) !== -1);
     return candidate;
   }
-  function rowsToAoa(rows, columns, labelOverrides) {
+  function rowsToAoa(rows, columns, labelOverrides, decimalsOverride) {
     var labels = labelOverrides || {};
+    var decimalsFor = decimalsOverride || {};
     var header = columns.map(function(c) {
       return labels[c] || cfg.COLUMN_LABELS[c] || c;
     });
@@ -5950,7 +6149,7 @@ PH.exporter = function() {
         if (v === null || v === undefined) return null;
         if (typeof v === "number" && isNaN(v)) return null;
         if (typeof v === "bigint") {
-          var decimals = cfg.decimalsForColumn(c);
+          var decimals = decimalsFor[c] !== undefined ? decimalsFor[c] : cfg.decimalsForColumn(c);
           var magnitude = v < 0n ? -v : v;
           if (magnitude > cfg.MAX_SAFE_SCALED) {
             throw new Error('قيمة العمود "' + (labels[c] || cfg.COLUMN_LABELS[c] || c) + '" أكبر من أن تُمثَّل بدقة في جدول بيانات');
@@ -5963,10 +6162,20 @@ PH.exporter = function() {
     });
     return [ header ].concat(body);
   }
-  function buildWorksheet(rows, columns, labelOverrides) {
+  function buildWorksheet(rows, columns, labelOverrides, moneyColumns, decimalsOverride) {
     var labels = labelOverrides || {};
-    var aoa = rowsToAoa(rows, columns, labels);
+    var decimalsFor = decimalsOverride || {};
+    var moneySet = {};
+    (moneyColumns || []).forEach(function(c) {
+      moneySet[c] = true;
+    });
+    var aoa = rowsToAoa(rows, columns, labels, decimalsFor);
     var ws = XLSX.utils.aoa_to_sheet(aoa);
+    var lastDataIdx = -1;
+    rows.forEach(function(row, i) {
+      if (!row.__totalsRow) lastDataIdx = i;
+    });
+    var filterEndRow = lastDataIdx === -1 ? 0 : lastDataIdx + 1;
     ws["!autofilter"] = {
       ref: XLSX.utils.encode_range({
         s: {
@@ -5974,7 +6183,7 @@ PH.exporter = function() {
           c: 0
         },
         e: {
-          r: aoa.length - 1,
+          r: filterEndRow,
           c: columns.length - 1
         }
       })
@@ -5984,7 +6193,7 @@ PH.exporter = function() {
       rows.forEach(function(row) {
         var v = row[c];
         var s;
-        if (v === null || v === undefined) s = ""; else if (typeof v === "bigint") s = PH.blocks.formatScaled(v, cfg.decimalsForColumn(c), false); else s = String(v);
+        if (v === null || v === undefined) s = ""; else if (typeof v === "bigint") s = PH.blocks.formatScaled(v, decimalsFor[c] !== undefined ? decimalsFor[c] : cfg.decimalsForColumn(c), false); else s = String(v);
         if (s.length > maxLen) maxLen = s.length;
       });
       return {
@@ -6000,8 +6209,8 @@ PH.exporter = function() {
         });
         var cell = ws[cellRef];
         if (!cell) return;
-        if (cfg.MONEY_COLUMNS[c]) {
-          var decimals = cfg.decimalsForColumn(c);
+        if (cfg.MONEY_COLUMNS[c] || moneySet[c]) {
+          var decimals = decimalsFor[c] !== undefined ? decimalsFor[c] : cfg.decimalsForColumn(c);
           cell.z = "#,##0." + "0".repeat(decimals);
         }
         if (rows[r - 1][c] === null || rows[r - 1][c] === undefined) {
@@ -6131,7 +6340,7 @@ PH.exporter = function() {
         }
         try {
           var sheet = sheets[index];
-          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
           var name = sheetNameFor(sheet.combination, sheet.name, usedNames, sheet.meta && sheet.meta.combined);
           XLSX.utils.book_append_sheet(wb, ws, name);
           index++;
@@ -6185,7 +6394,7 @@ PH.exporter = function() {
               RTL: true
             } ]
           };
-          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels);
+          var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
           XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, [], sheet.meta && sheet.meta.combined));
           var buf = XLSX.write(wb, {
             bookType: "xlsx",
@@ -6211,16 +6420,18 @@ PH.exporter = function() {
       next();
     });
   }
-  function rowsToCsv(rows, columns, separator) {
+  function rowsToCsv(rows, columns, separator, labelOverrides, decimalsOverride) {
     var sep = separator || ",";
+    var labels = labelOverrides || {};
+    var decimalsFor = decimalsOverride || {};
     var lines = [ columns.map(function(c) {
-      return cfg.COLUMN_LABELS[c] || c;
+      return labels[c] || cfg.COLUMN_LABELS[c] || c;
     }).join(sep) ];
     rows.forEach(function(row) {
       var line = columns.map(function(c) {
         var v = row[c];
         if (v === null || v === undefined) return "";
-        if (typeof v === "bigint") return PH.blocks.formatScaled(v, cfg.decimalsForColumn(c), false);
+        if (typeof v === "bigint") return PH.blocks.formatScaled(v, decimalsFor[c] !== undefined ? decimalsFor[c] : cfg.decimalsForColumn(c), false);
         var s = String(v);
         if (s.indexOf(sep) !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1) {
           s = '"' + s.replace(/"/g, '""') + '"';
@@ -6232,7 +6443,7 @@ PH.exporter = function() {
     return "\ufeff" + lines.join("\r\n");
   }
   function exportCsv(rows, columns, opts) {
-    var csv = rowsToCsv(rows, columns, opts.separator);
+    var csv = rowsToCsv(rows, columns, opts.separator, opts.columnLabels, opts.columnDecimals);
     var blob = new Blob([ csv ], {
       type: "text/csv;charset=utf-8"
     });
@@ -6245,6 +6456,83 @@ PH.exporter = function() {
     });
     downloadBlob(blob, fileName);
     return fileName;
+  }
+  function exportCsvBundle(sheets, opts) {
+    if (opts.onProgress) opts.onProgress(0, sheets.length);
+    if (sheets.length <= 1) {
+      var sheet = sheets[0];
+      var csv = sheet ? rowsToCsv(sheet.rows, sheet.columns, opts.separator, sheet.columnLabels, sheet.columnDecimals) : "\ufeff";
+      var blob = new Blob([ csv ], {
+        type: "text/csv;charset=utf-8"
+      });
+      var fileName = buildFileName({
+        month: opts.month,
+        reportLabel: opts.reportLabel,
+        combination: sheet && sheet.combination || {
+          budget: null,
+          shift: null,
+          dispense: null
+        },
+        descriptor: opts.descriptor,
+        ext: "csv"
+      });
+      downloadBlob(blob, fileName);
+      if (opts.onProgress) opts.onProgress(1, sheets.length);
+      return Promise.resolve(fileName);
+    }
+    var zip = new JSZip;
+    var usedNames = [];
+    var zipName = buildFileName({
+      month: opts.month,
+      reportLabel: opts.reportLabel,
+      combination: {
+        budget: null,
+        shift: null,
+        dispense: null
+      },
+      descriptor: opts.descriptor,
+      ext: "zip"
+    });
+    var index = 0;
+    return new Promise(function(resolve, reject) {
+      function next() {
+        if (opts.abortToken && opts.abortToken.cancelled) {
+          reject(new Error("تم الإلغاء"));
+          return;
+        }
+        if (index >= sheets.length) {
+          zip.generateAsync({
+            type: "blob"
+          }, function(meta) {
+            if (opts.onProgress) opts.onProgress(sheets.length, sheets.length, meta.percent);
+          }).then(function(blob) {
+            downloadBlob(blob, zipName);
+            resolve(zipName);
+          }).catch(reject);
+          return;
+        }
+        try {
+          var s = sheets[index];
+          var csvText = rowsToCsv(s.rows, s.columns, opts.separator, s.columnLabels, s.columnDecimals);
+          var name = buildFileName({
+            month: opts.month,
+            reportLabel: s.name,
+            combination: s.combination,
+            descriptor: opts.descriptor,
+            ext: "csv"
+          });
+          name = resolveCollision(name, usedNames);
+          usedNames.push(name);
+          zip.file(name, csvText);
+          index++;
+          if (opts.onProgress) opts.onProgress(index, sheets.length);
+          setTimeout(next, 0);
+        } catch (err) {
+          reject(err);
+        }
+      }
+      next();
+    });
   }
   function downloadBlob(blob, fileName) {
     var url = URL.createObjectURL(blob);
@@ -6269,6 +6557,7 @@ PH.exporter = function() {
     exportZipPerSheet,
     rowsToCsv,
     exportCsv,
+    exportCsvBundle,
     downloadBlob
   };
 }();
@@ -7359,6 +7648,254 @@ PH.selftest = function() {
       check(result, sheet.columns.indexOf("cumulative") !== -1, "duplicate config: first configured column is kept");
       check(result, sheet.columns.indexOf("cumulative2") === -1, "duplicate config: second (identical) column is rejected, not written alongside the first");
     })();
+    (function() {
+      var rows = mkRows(10, "value");
+      var settings = {
+        rowsPerPage: 4,
+        blockSize: 3
+      };
+      var scopes = [ "row", "page", "block", "group", "sheet" ];
+      var modes = [ "cumulative", "closing", "carry" ];
+      var grand = rows.reduce(function(a, r) {
+        return a + r.value;
+      }, 0n);
+      scopes.forEach(function(scope) {
+        modes.forEach(function(mode) {
+          var layer = {
+            scope,
+            mode,
+            field: "value",
+            resetOn: scope === "group" ? "unit" : null
+          };
+          var series = exportPlan.computeLayerSeries(rows, layer, settings);
+          check(result, series.length === rows.length, "layers[" + scope + "/" + mode + "]: series length matches rows");
+          if (mode === "cumulative") {
+            check(result, series.every(function(v) {
+              return v !== null && v !== undefined;
+            }), "layers[" + scope + "/cumulative]: non-null on every row");
+          } else if (mode === "closing") {
+            var nonNull = series.filter(function(v) {
+              return v !== null;
+            });
+            var sum = nonNull.reduce(function(a, v) {
+              return a + v;
+            }, 0n);
+            check(result, sum === grand, "layers[" + scope + "/closing]: closings sum to the grand total");
+          } else {
+            var nn = series.filter(function(v) {
+              return v !== null;
+            });
+            check(result, nn.length > 0 && nn[nn.length - 1] === grand, "layers[" + scope + "/carry]: last non-null value equals the grand total");
+            check(result, nn.every(function(v, i) {
+              return i === 0 || v >= nn[i - 1];
+            }), "layers[" + scope + "/carry]: monotonically non-decreasing");
+          }
+        });
+      });
+    })();
+    (function() {
+      var rows = mkRows(10, "value");
+      var settings = {
+        rowsPerPage: 4
+      };
+      var series = exportPlan.computeLayerSeries(rows, {
+        scope: "page",
+        mode: "closing",
+        field: "value"
+      }, settings);
+      var nonNull = series.filter(function(v) {
+        return v !== null;
+      });
+      var pages = paginate.buildPagesFromBlocked(rows, 4);
+      var expected = pages.pages.map(function(page) {
+        return page.rows.reduce(function(a, slot) {
+          return slot.row && typeof slot.row.value === "bigint" ? a + slot.row.value : a;
+        }, 0n);
+      });
+      check(result, nonNull.length === expected.length, "scope:page unit count matches paginate.buildPagesFromBlocked");
+      for (var i = 0; i < expected.length; i++) check(result, nonNull[i] === expected[i], "scope:page chunk[" + i + "] is byte-identical to paginate's own chunk sum");
+    })();
+    (function() {
+      var rows = mkRows(10, "value");
+      var settings = {
+        blockSize: null,
+        rowsPerPage: 4
+      };
+      var series = exportPlan.computeLayerSeries(rows, {
+        scope: "block",
+        mode: "closing",
+        field: "value"
+      }, settings);
+      var nonNull = series.filter(function(v) {
+        return v !== null;
+      });
+      check(result, nonNull.length === 3, "scope:block with blockSize:null falls back to rowsPerPage instead of collapsing to a single trailing total");
+    })();
+    (function() {
+      var rows = mkRows(6, "value").map(function(r, i) {
+        r.qty = BigInt((i + 1) * 3);
+        return r;
+      });
+      var settings = {
+        blockSize: 3
+      };
+      var layerValue = {
+        scope: "block",
+        mode: "closing",
+        field: "value"
+      };
+      var layerQty = {
+        scope: "block",
+        mode: "closing",
+        field: "qty"
+      };
+      var seriesValueTogether = exportPlan.computeLayerSeries(rows, layerValue, settings);
+      var seriesQtyTogether = exportPlan.computeLayerSeries(rows, layerQty, settings);
+      var seriesValueAlone = exportPlan.computeLayerSeries(rows, layerValue, settings);
+      var seriesQtyAlone = exportPlan.computeLayerSeries(rows, layerQty, settings);
+      check(result, seriesValueTogether.every(function(v, i) {
+        return v === seriesValueAlone[i];
+      }), "two layers with different fields: value series is bit-identical whether computed alongside qty or alone");
+      check(result, seriesQtyTogether.every(function(v, i) {
+        return v === seriesQtyAlone[i];
+      }), "two layers with different fields: qty series is bit-identical whether computed alongside value or alone");
+    })();
+    (function() {
+      var rows = mkRows(6, "value").map(function(r, i) {
+        r.qty = BigInt((i + 1) * 3);
+        return r;
+      });
+      var entry = {
+        reportId: "movement",
+        sliceKey: "s1",
+        combination: {},
+        rows,
+        columns: [ "name", "unit", "value", "qty" ],
+        settings: {
+          blockSize: 3
+        },
+        reportLabel: "الحركة",
+        printTotalField: "value"
+      };
+      var plan = {
+        reports: [ "movement" ],
+        sheetSplit: "per-slice",
+        totals: {
+          grandTotal: false,
+          embedded: {
+            enabled: false
+          },
+          columns: [ {
+            scope: "block",
+            mode: "closing",
+            field: "qty",
+            emit: "column"
+          } ]
+        }
+      };
+      var sheet = exportPlan.buildSheets(plan, {
+        sheets: [ entry ]
+      })[0];
+      var key = exportPlan.layerKey({
+        scope: "block",
+        mode: "closing",
+        field: "qty",
+        key: null
+      });
+      check(result, sheet.columns.indexOf(key) !== -1, "emitted layer key is present in the sheet's columns");
+      check(result, !!sheet.columnLabels[key], "emitted layer key has an auto-generated column label");
+      check(result, sheet.moneyColumns.indexOf(key) !== -1, "emitted layer key is present in sheet.moneyColumns");
+    })();
+    (function() {
+      var rows = mkRows(4, "value");
+      var hiddenEntry = {
+        reportId: "movement",
+        sliceKey: "s1",
+        combination: {},
+        rows,
+        columns: [ "name", "unit", "value" ],
+        hiddenColumns: [ "cumulative" ],
+        settings: {},
+        reportLabel: "الحركة",
+        printTotalField: "value"
+      };
+      var plan = {
+        reports: [ "movement" ],
+        sheetSplit: "per-slice",
+        totals: {
+          grandTotal: false,
+          embedded: {
+            enabled: false
+          },
+          columns: [ {
+            key: "cumulative",
+            kind: "cumsum",
+            field: "value",
+            basis: "block"
+          } ]
+        }
+      };
+      var hiddenSheet = exportPlan.buildSheets(plan, {
+        sheets: [ hiddenEntry ]
+      })[0];
+      check(result, hiddenSheet.columns.indexOf("cumulative") === -1, "a layer whose key collides with a hidden report column does not resurrect that column");
+      var visibleEntry = Object.assign({}, hiddenEntry, {
+        hiddenColumns: undefined
+      });
+      var visibleSheet = exportPlan.buildSheets(plan, {
+        sheets: [ visibleEntry ]
+      })[0];
+      check(result, visibleSheet.columns.indexOf("cumulative") !== -1, "sanity: without hiddenColumns the same layer key is added normally");
+    })();
+    (function() {
+      var norm = exportPlan.normalizeTotals({
+        columns: [ {
+          kind: "cumsum",
+          basis: "running",
+          field: "x"
+        } ]
+      });
+      var layer = norm.layers[0];
+      check(result, layer.scope === "block" && layer.mode === "carry" && layer.field === "x" && layer.emit === "column", "normalizeTotals maps legacy {kind:cumsum, basis:running} to {scope:block, mode:carry} exactly as before the refactor");
+    })();
+    (function() {
+      var normA = exportPlan.normalizeTotals({
+        columns: []
+      });
+      var normB = exportPlan.normalizeTotals({
+        columns: [ {
+          kind: "cumsum",
+          basis: "block",
+          field: "value"
+        } ]
+      });
+      var descA = exportPlan.descriptorForLayers(normA.layers);
+      var descB = exportPlan.descriptorForLayers(normB.layers);
+      check(result, descA !== descB, "two plans differing only in totals produce different descriptors");
+      var nameA = PH.exporter.buildFileName({
+        month: "2026-07",
+        reportLabel: "الحركة",
+        combination: {
+          budget: null,
+          shift: null,
+          dispense: null
+        },
+        descriptor: descA,
+        ext: "xlsx"
+      });
+      var nameB = PH.exporter.buildFileName({
+        month: "2026-07",
+        reportLabel: "الحركة",
+        combination: {
+          budget: null,
+          shift: null,
+          dispense: null
+        },
+        descriptor: descB,
+        ext: "xlsx"
+      });
+      check(result, nameA !== nameB, "two exports whose plans differ only in totals produce different buildFileName results");
+    })();
     return result;
   }
   function runNormalizeInvariants() {
@@ -7661,7 +8198,8 @@ PH.app = function() {
     sourceRowFilterIds: null,
     sourceRowFilterVersion: 0,
     applyToPrintExport: true,
-    hiddenColumns: {}
+    hiddenColumns: {},
+    savedExportPlan: null
   };
   function setSourceRowFilterIds(ids) {
     state.sourceRowFilterIds = ids;
@@ -7870,6 +8408,17 @@ PH.app = function() {
       rowsPerPage,
       orientation
     }));
+  }
+  function resolvePrintTotalField(repDef) {
+    if (!repDef.printTotalField || !state.savedExportPlan || !state.savedExportPlan.totals) return repDef.printTotalField;
+    var norm = PH.exportPlan.migrateTotals(state.savedExportPlan.totals);
+    for (var i = 0; i < norm.layers.length; i++) {
+      var layer = norm.layers[i];
+      if ((layer.emit === "row" || layer.emit === "both") && layer.field && repDef.columns.indexOf(layer.field) !== -1) {
+        return layer.field;
+      }
+    }
+    return repDef.printTotalField;
   }
   function drawerSection(titleText) {
     var sec = el("div", {
@@ -9028,7 +9577,7 @@ PH.app = function() {
       var control;
       if (field.dimension) {
         control = el("select", {
-          class: "input"
+          class: "select"
         });
         control.appendChild(el("option", {
           value: ""
@@ -9319,7 +9868,7 @@ PH.app = function() {
           store.setSourceRows(store.getSourceRows().filter(function(sourceRow) {
             return sourceRow.id !== row.id;
           }), "حذف صف مصدر", false);
-          showToast("تم حذف الصف");
+          showToast("تم حذف الصف", true);
         });
       } : null,
       onSort: function(column, additive) {
@@ -10316,7 +10865,7 @@ PH.app = function() {
           hasFilledMoney: outputRows.some(function(r) {
             return r.__filled || r.__fromFilled;
           }),
-          printTotalField: repDef.printTotalField,
+          printTotalField: resolvePrintTotalField(repDef),
           largeConfirmed: largePreviewConfirmed
         };
         var result = PH.print.renderPreview(previewContainer, outputRows, previewOpts);
@@ -10455,7 +11004,7 @@ PH.app = function() {
         hasFilledMoney: outputRows.some(function(r) {
           return r.__filled || r.__fromFilled;
         }),
-        printTotalField: repDef.printTotalField,
+        printTotalField: resolvePrintTotalField(repDef),
         largeConfirmed,
         geometryConfirmed
       });
@@ -10521,7 +11070,7 @@ PH.app = function() {
     } else if (kind === "sum") {
       cell(72, 2, 16, 31, "var(--brass)");
     } else if (kind === "group") {
-      cell(2, 24, 84, 9, "var(--brass)");
+      cell(2, 25, 84, 8, "var(--brass)");
     }
     return svg;
   }
@@ -10563,39 +11112,40 @@ PH.app = function() {
       applyView: !!state.applyToPrintExport,
       totals: {
         grandTotal: true,
-        embedded: {
-          enabled: false,
-          carryForward: true
-        },
-        columns: []
+        layers: []
       }
     };
-    var draftColumn = {
-      kind: "cumsum",
+    var draftLayer = {
+      scope: "block",
+      mode: "closing",
       field: null,
-      basis: "block",
-      groupBy: null,
+      emit: "column",
+      resetOn: null,
       label: null
     };
     function reportById(id) {
       return cfg.REPORTS_BY_ID[id];
     }
-    function moneyColumnsForPlan() {
-      var seen = {};
+    function numericColumnsForPlan() {
+      var repDefs = plan.reports.map(reportById).filter(Boolean);
+      if (!repDefs.length) return [];
       var order = [];
-      plan.reports.map(reportById).filter(Boolean).forEach(function(rep) {
-        rep.columns.forEach(function(c) {
-          if (cfg.MONEY_COLUMNS[c] && !seen[c]) {
-            seen[c] = true;
-            order.push(c);
-          }
+      var seen = {};
+      repDefs[0].columns.forEach(function(c) {
+        if (cfg.isNumericColumn(c) && !seen[c]) {
+          seen[c] = true;
+          order.push(c);
+        }
+      });
+      return order.filter(function(c) {
+        return repDefs.every(function(r) {
+          return r.columns.indexOf(c) !== -1;
         });
       });
-      return order;
     }
     function defaultFieldForPlan() {
       var firstRep = reportById(plan.reports[0]);
-      return firstRep && firstRep.printTotalField || moneyColumnsForPlan()[0] || null;
+      return firstRep && firstRep.printTotalField || numericColumnsForPlan()[0] || null;
     }
     function textColumnsForPlan() {
       var firstRep = reportById(plan.reports[0]);
@@ -10627,15 +11177,10 @@ PH.app = function() {
         });
         if (filteredSlices.length) plan.slices = filteredSlices;
       }
-      if (saved.layout === "one-workbook" || saved.layout === "zip") plan.layout = saved.layout;
+      if (saved.layout === "one-workbook" || saved.layout === "zip" || saved.layout === "csv") plan.layout = saved.layout;
       if (saved.sheetSplit === "per-slice" || saved.sheetSplit === "combined") plan.sheetSplit = saved.sheetSplit;
       if (typeof saved.applyView === "boolean") plan.applyView = saved.applyView;
       if (saved.totals) plan.totals = PH.exportPlan.migrateTotals(saved.totals);
-    }
-    function anyPrintTotal() {
-      return plan.reports.map(reportById).filter(Boolean).some(function(r) {
-        return !!r.printTotalField;
-      });
     }
     function sheetCountEstimate() {
       var n = 0;
@@ -10670,25 +11215,113 @@ PH.app = function() {
       }, [ text("— " + disabledReason) ]));
       return row;
     }
-    function radioRow(name, value, current, labelText, onPick) {
-      var row = el("label", {
-        class: "row",
-        style: "gap:var(--sp-2); align-items:center; font-size:var(--fs-body); cursor:pointer;"
-      });
-      var rb = el("input", {
-        type: "radio",
-        name
-      });
-      rb.checked = current === value;
-      rb.addEventListener("change", function() {
-        if (rb.checked) {
-          onPick(value);
-          refresh();
+    function diagramKindForScope(scope) {
+      if (scope === "sheet") return "sum";
+      if (scope === "group") return "group";
+      return "cumsum";
+    }
+    function buildPreviewSheet() {
+      try {
+        var reportId = plan.reports[0];
+        if (!reportId) return null;
+        var repDef = reportById(reportId);
+        if (!repDef) return null;
+        var entry;
+        if (reportId === "pages") {
+          var all = matrix.allValuesCombination();
+          var sheet = computeSheetFor("pages", all);
+          entry = {
+            reportId: "pages",
+            sliceKey: "*",
+            combination: null,
+            rows: sheet.rows,
+            columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
+            hiddenColumns: (state.hiddenColumns[repDef.id] || []).slice(),
+            settings: resolveSettings("pages"),
+            reportLabel: repDef.label,
+            printTotalField: repDef.printTotalField
+          };
+        } else {
+          var chosenSlices = plan.slices.length ? plan.slices : combos.map(function(c) {
+            return c.key;
+          });
+          var key = chosenSlices[0];
+          var c = key ? comboMap[key] : null;
+          if (!c) return null;
+          var sheetData = computeSheetFor(reportId, c.combination);
+          var settings = resolveSettings(reportId);
+          var filtered = exportPipelineRows(sheetData, repDef, plan.applyView);
+          entry = {
+            reportId,
+            sliceKey: key,
+            combination: {
+              budget: reports.dimLabel(c.combination, "budget"),
+              shift: reports.dimLabel(c.combination, "shift"),
+              dispense: reports.dimLabel(c.combination, "dispense")
+            },
+            rows: filtered,
+            columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
+            hiddenColumns: (state.hiddenColumns[repDef.id] || []).slice(),
+            settings,
+            reportLabel: repDef.label,
+            printTotalField: repDef.printTotalField
+          };
         }
+        var previewPlan = {
+          reports: [ reportId ],
+          sheetSplit: "per-slice",
+          totals: plan.totals
+        };
+        var sheets = PH.exportPlan.buildSheets(previewPlan, {
+          sheets: [ entry ]
+        });
+        return sheets[0] || null;
+      } catch (err) {
+        return null;
+      }
+    }
+    function renderPreviewStrip(container) {
+      container.innerHTML = "";
+      var sheet = buildPreviewSheet();
+      if (!sheet || !sheet.rows.length) {
+        container.appendChild(el("div", {
+          class: "fs-caption text-soft"
+        }, [ text("لا توجد بيانات كافية لمعاينة النتيجة.") ]));
+        return;
+      }
+      var previewRows = sheet.rows.slice(0, 10);
+      var table = el("table", {
+        style: "width:100%; border-collapse:collapse; font-size:12px;"
       });
-      row.appendChild(rb);
-      row.appendChild(el("span", {}, [ text(labelText) ]));
-      return row;
+      var thead = el("thead");
+      var headRow = el("tr");
+      sheet.columns.forEach(function(c) {
+        headRow.appendChild(el("th", {
+          style: "text-align:start; padding:4px 6px; border-bottom:1px solid var(--line); color:var(--text-soft); font-weight:600; white-space:nowrap;"
+        }, [ text(sheet.columnLabels[c] || cfg.COLUMN_LABELS[c] || c) ]));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      var tbody = el("tbody");
+      previewRows.forEach(function(row) {
+        var tr = el("tr", row.__totalsRow ? {
+          style: "background:var(--paper-sunken); font-weight:600;"
+        } : {});
+        sheet.columns.forEach(function(c) {
+          tr.appendChild(el("td", {
+            style: "padding:4px 6px; border-bottom:1px solid var(--line); white-space:nowrap;"
+          }, [ text(PH.format.cell(row[c], c)) ]));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+      if (sheet.rows.length > previewRows.length) {
+        container.appendChild(el("div", {
+          class: "fs-caption text-soft",
+          style: "margin-top:4px;"
+        }, [ text("+ " + (sheet.rows.length - previewRows.length) + " صفوف أخرى") ]));
+      }
     }
     function section(title) {
       var wrap = el("div", {
@@ -10699,6 +11332,49 @@ PH.app = function() {
         style: "font-weight:600; text-transform:uppercase; letter-spacing:.02em; color:var(--text-soft);"
       }, [ text(title) ]));
       return wrap;
+    }
+    function segmented(options, current, onPick) {
+      var row = el("div", {
+        class: "row",
+        style: "gap:var(--sp-1); flex-wrap:wrap;"
+      });
+      options.forEach(function(opt) {
+        var btn = el("button", {
+          class: "pill",
+          type: "button",
+          "aria-pressed": current === opt.value ? "true" : "false"
+        }, [ text(opt.label) ]);
+        btn.addEventListener("click", function() {
+          update(function() {
+            onPick(opt.value);
+          });
+        });
+        row.appendChild(btn);
+      });
+      return row;
+    }
+    function selectField(labelText, options, current, onChange) {
+      var sel = el("select", {
+        class: "select"
+      });
+      options.forEach(function(opt) {
+        sel.appendChild(el("option", {
+          value: opt.value
+        }, [ text(opt.label) ]));
+      });
+      sel.value = current || "";
+      sel.addEventListener("change", function() {
+        update(function() {
+          onChange(sel.value);
+        });
+      });
+      return fieldWrap(labelText, sel);
+    }
+    function update(mutator) {
+      var scrollTop = body.scrollTop;
+      mutator();
+      refresh();
+      body.scrollTop = scrollTop;
     }
     var overlay = el("div", {
       role: "dialog",
@@ -10832,111 +11508,62 @@ PH.app = function() {
       picker.appendChild(slicesSec);
       body.appendChild(picker);
       var layoutSec = section("طريقة الحفظ");
-      var layoutRow = el("div", {
-        class: "row",
-        style: "gap:var(--sp-4);"
-      });
-      layoutRow.appendChild(radioRow("layout", "one-workbook", plan.layout, "ملف Excel واحد", function(v) {
+      layoutSec.appendChild(segmented([ {
+        value: "one-workbook",
+        label: "ملف Excel واحد"
+      }, {
+        value: "zip",
+        label: "ملف ZIP — ورقة لكل شريحة"
+      }, {
+        value: "csv",
+        label: "ملف CSV"
+      } ], plan.layout, function(v) {
         plan.layout = v;
       }));
-      layoutRow.appendChild(radioRow("layout", "zip", plan.layout, "ملف ZIP — ورقة لكل شريحة", function(v) {
-        plan.layout = v;
-      }));
-      layoutSec.appendChild(layoutRow);
-      if (plan.layout === "one-workbook" && plan.slices.length > 1 && !includesPages) {
-        var splitRow = el("div", {
-          class: "row",
-          style: "gap:var(--sp-4);"
-        });
-        splitRow.appendChild(radioRow("sheetSplit", "per-slice", plan.sheetSplit, "ورقة لكل شريحة", function(v) {
+      if (plan.slices.length > 1 && !includesPages) {
+        layoutSec.appendChild(segmented([ {
+          value: "per-slice",
+          label: "ورقة لكل شريحة"
+        }, {
+          value: "combined",
+          label: "ورقة واحدة مجمّعة"
+        } ], plan.sheetSplit, function(v) {
           plan.sheetSplit = v;
         }));
-        splitRow.appendChild(radioRow("sheetSplit", "combined", plan.sheetSplit, "ورقة واحدة مجمّعة", function(v) {
-          plan.sheetSplit = v;
-        }));
-        layoutSec.appendChild(splitRow);
       }
       body.appendChild(layoutSec);
       var totalsSec = section("الإجماليات");
-      if (!anyPrintTotal()) {
+      if (!numericColumnsForPlan().length) {
         totalsSec.appendChild(el("div", {
           class: "fs-caption text-soft"
-        }, [ text("لا يوجد عمود مالي في التقارير المحدَّدة.") ]));
+        }, [ text("لا يوجد عمود رقمي في التقارير المحدَّدة.") ]));
       } else {
-        var grandRow = el("label", {
-          class: "row",
-          style: "gap:var(--sp-2); align-items:center; cursor:pointer;"
-        });
-        var grandCb = el("input", {
-          type: "checkbox"
-        });
-        grandCb.checked = plan.totals.grandTotal;
-        grandCb.addEventListener("change", function() {
-          plan.totals.grandTotal = grandCb.checked;
-        });
-        grandRow.appendChild(grandCb);
-        grandRow.appendChild(el("span", {}, [ text("إضافة صف الإجمالي الكلي") ]));
-        totalsSec.appendChild(grandRow);
-        var embeddedRow = el("label", {
-          class: "row",
-          style: "gap:var(--sp-2); align-items:center; cursor:pointer;"
-        });
-        var embeddedCb = el("input", {
-          type: "checkbox"
-        });
-        embeddedCb.checked = plan.totals.embedded.enabled;
-        embeddedCb.addEventListener("change", function() {
-          plan.totals.embedded.enabled = embeddedCb.checked;
-          refresh();
-        });
-        embeddedRow.appendChild(embeddedCb);
-        embeddedRow.appendChild(el("span", {}, [ text("صفوف إجمالي بين الصفحات") ]));
-        totalsSec.appendChild(embeddedRow);
-        if (plan.totals.embedded.enabled) {
-          var carryRow = el("label", {
-            class: "row",
-            style: "gap:var(--sp-2); align-items:center; cursor:pointer; margin-inline-start:24px;"
+        totalsSec.appendChild(switchRow("إضافة صف الإجمالي الكلي", plan.totals.grandTotal, function(newVal) {
+          update(function() {
+            plan.totals.grandTotal = newVal;
           });
-          var carryCb = el("input", {
-            type: "checkbox"
-          });
-          carryCb.checked = plan.totals.embedded.carryForward;
-          carryCb.addEventListener("change", function() {
-            plan.totals.embedded.carryForward = carryCb.checked;
-          });
-          carryRow.appendChild(carryCb);
-          carryRow.appendChild(el("span", {}, [ text('إظهار "المنقول من الصفحة السابقة"') ]));
-          totalsSec.appendChild(carryRow);
-          var firstRepId = plan.reports[0];
-          var firstSettings = firstRepId ? resolveSettings(firstRepId) : null;
-          var rpp = firstSettings && firstSettings.rowsPerPage || 24;
-          totalsSec.appendChild(el("div", {
-            class: "fs-caption text-soft",
-            style: "margin-inline-start:24px;"
-          }, [ text("حجم الصفحة الحالي: " + rpp + " صفًا — يُغيَّر من إعدادات الصفحة") ]));
-        }
+        }));
         var columnsListSec = el("div", {
           style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
         });
         columnsListSec.appendChild(el("div", {
           class: "fs-caption",
           style: "font-weight:600; color:var(--text-soft);"
-        }, [ text("أعمدة الإجمالي") ]));
-        var kindLabels = {
-          cumsum: "تراكمي",
-          sum: "إجمالي جارٍ",
-          group: "إجمالي فرعي"
+        }, [ text("طبقات الإجمالي") ]));
+        var emitLabels = {
+          column: "عمود",
+          row: "صف بين البيانات",
+          both: "عمود + صف"
         };
-        plan.totals.columns.forEach(function(colCfg, idx) {
-          var fieldLabel = cfg.COLUMN_LABELS[colCfg.field] || colCfg.field || defaultFieldForPlan();
-          var extra = colCfg.kind === "cumsum" ? " · " + (colCfg.basis === "running" ? "مستمر" : "لكل كتلة") : colCfg.kind === "group" ? " · " + (cfg.COLUMN_LABELS[colCfg.groupBy] || colCfg.groupBy || "—") : "";
+        plan.totals.layers.forEach(function(layerCfg) {
+          var summary = PH.exportPlan.layerLabel(layerCfg) + " · " + emitLabels[layerCfg.emit] + (layerCfg.scope === "group" && layerCfg.resetOn ? " · إعادة البدء: " + (cfg.COLUMN_LABELS[layerCfg.resetOn] || layerCfg.resetOn) : "");
           var row = el("div", {
             class: "row",
             style: "justify-content:space-between; align-items:center; gap:var(--sp-2); padding:var(--sp-2); background:var(--paper-sunken); border-radius:var(--r-inner);"
           });
           row.appendChild(el("span", {
             class: "fs-body"
-          }, [ text(kindLabels[colCfg.kind] + " · " + fieldLabel + extra + (colCfg.label ? ' · "' + colCfg.label + '"' : "")) ]));
+          }, [ text(summary) ]));
           var actions = el("div", {
             class: "row",
             style: "gap:4px;"
@@ -10946,11 +11573,12 @@ PH.app = function() {
             type: "button"
           }, [ text("تعديل") ]);
           editBtn.addEventListener("click", function() {
-            draftColumn = colCfg;
-            plan.totals.columns = plan.totals.columns.filter(function(c) {
-              return c !== colCfg;
+            update(function() {
+              draftLayer = layerCfg;
+              plan.totals.layers = plan.totals.layers.filter(function(l) {
+                return l !== layerCfg;
+              });
             });
-            refresh();
           });
           var removeBtn = el("button", {
             class: "btn btn--ghost btn--icon",
@@ -10958,144 +11586,167 @@ PH.app = function() {
             title: "إزالة"
           }, [ text("✕") ]);
           removeBtn.addEventListener("click", function() {
-            plan.totals.columns = plan.totals.columns.filter(function(c) {
-              return c !== colCfg;
+            update(function() {
+              plan.totals.layers = plan.totals.layers.filter(function(l) {
+                return l !== layerCfg;
+              });
             });
-            refresh();
           });
           actions.appendChild(editBtn);
           actions.appendChild(removeBtn);
           row.appendChild(actions);
           columnsListSec.appendChild(row);
         });
-        if (plan.totals.columns.length >= 2) {
+        if (plan.totals.layers.length >= 4) {
           columnsListSec.appendChild(el("div", {
+            class: "fs-caption",
+            style: "color:var(--brass);"
+          }, [ text("تنبيه: أكثر من 4 طبقات إجمالي قد يجعل الملف صعب القراءة.") ]));
+        }
+        var editorBox = el("div", {
+          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding:var(--sp-2); border:1px dashed var(--line); border-radius:var(--r-inner);"
+        });
+        editorBox.appendChild(totalsDiagram(diagramKindForScope(draftLayer.scope)));
+        editorBox.appendChild(fieldWrap("النطاق", segmented([ {
+          value: "row",
+          label: "لكل صف"
+        }, {
+          value: "page",
+          label: "لكل صفحة"
+        }, {
+          value: "block",
+          label: "لكل كتلة"
+        }, {
+          value: "group",
+          label: "لكل مجموعة"
+        }, {
+          value: "sheet",
+          label: "لكل الورقة"
+        } ], draftLayer.scope, function(v) {
+          draftLayer.scope = v;
+        })));
+        editorBox.appendChild(fieldWrap("النوع", segmented([ {
+          value: "cumulative",
+          label: "تراكمي"
+        }, {
+          value: "closing",
+          label: "ختامي"
+        }, {
+          value: "carry",
+          label: "منقول"
+        } ], draftLayer.mode, function(v) {
+          draftLayer.mode = v;
+        })));
+        editorBox.appendChild(fieldWrap("الإخراج", segmented([ {
+          value: "column",
+          label: "عمود جديد"
+        }, {
+          value: "row",
+          label: "صف بين البيانات"
+        }, {
+          value: "both",
+          label: "كلاهما"
+        } ], draftLayer.emit, function(v) {
+          draftLayer.emit = v;
+        })));
+        editorBox.appendChild(selectField("العمود", numericColumnsForPlan().map(function(f) {
+          return {
+            value: f,
+            label: cfg.COLUMN_LABELS[f] || f
+          };
+        }), draftLayer.field || defaultFieldForPlan() || "", function(v) {
+          draftLayer.field = v || null;
+        }));
+        if (draftLayer.scope === "group") {
+          editorBox.appendChild(selectField("إعادة البدء عند تغيّر", [ {
+            value: "",
+            label: "اختر عمودًا"
+          } ].concat(textColumnsForPlan().map(function(c) {
+            return {
+              value: c,
+              label: cfg.COLUMN_LABELS[c] || c
+            };
+          })), draftLayer.resetOn || "", function(v) {
+            draftLayer.resetOn = v || null;
+          }));
+        }
+        if (draftLayer.scope === "page") {
+          var rppCaption;
+          if (plan.reports.length === 1) {
+            var repSettings = resolveSettings(plan.reports[0]);
+            rppCaption = "حجم الصفحة الحالي: " + (repSettings && repSettings.rowsPerPage || 24) + " صفًا — يُغيَّر من إعدادات الصفحة";
+          } else {
+            rppCaption = "حجم الصفحة يختلف حسب التقرير المحدَّد — يُغيَّر من إعدادات كل تقرير";
+          }
+          editorBox.appendChild(el("div", {
             class: "fs-caption text-soft"
-          }, [ text("الحد الأقصى عمودان.") ]));
-        } else {
-          var modesRow = el("div", {
-            style: "display:flex; gap:var(--sp-3); flex-wrap:wrap;"
-          });
-          [ [ "cumsum", "تراكمي" ], [ "sum", "إجمالي جارٍ" ], [ "group", "إجمالي فرعي" ] ].forEach(function(opt) {
-            var card = el("button", {
-              class: "btn btn--tertiary totals-mode-card",
-              type: "button",
-              "aria-pressed": draftColumn.kind === opt[0] ? "true" : "false",
-              style: "display:flex; flex-direction:column; align-items:center; gap:4px; padding:var(--sp-2);"
-            });
-            card.appendChild(totalsDiagram(opt[0]));
-            card.appendChild(el("span", {
-              class: "fs-caption"
-            }, [ text(opt[1]) ]));
-            card.addEventListener("click", function() {
-              draftColumn.kind = opt[0];
-              refresh();
-            });
-            modesRow.appendChild(card);
-          });
-          columnsListSec.appendChild(modesRow);
-          var fieldSelect = el("select", {
-            class: "select"
-          });
-          moneyColumnsForPlan().forEach(function(f) {
-            fieldSelect.appendChild(el("option", {
-              value: f
-            }, [ text(cfg.COLUMN_LABELS[f] || f) ]));
-          });
-          fieldSelect.value = draftColumn.field || defaultFieldForPlan() || "";
-          fieldSelect.addEventListener("change", function() {
-            draftColumn.field = fieldSelect.value;
-          });
-          columnsListSec.appendChild(fieldWrap("العمود", fieldSelect));
-          if (draftColumn.kind === "cumsum") {
-            var basisRow = el("div", {
-              class: "row",
-              style: "gap:var(--sp-4);"
-            });
-            basisRow.appendChild(radioRow("draft-basis", "block", draftColumn.basis, "تراكمي داخل كل مجموعة", function(v) {
-              draftColumn.basis = v;
-            }));
-            basisRow.appendChild(radioRow("draft-basis", "running", draftColumn.basis, "تراكمي مستمر", function(v) {
-              draftColumn.basis = v;
-            }));
-            columnsListSec.appendChild(basisRow);
+          }, [ text(rppCaption) ]));
+        }
+        var labelInput = el("input", {
+          class: "input",
+          type: "text",
+          placeholder: "عنوان مخصَّص (اختياري)"
+        });
+        labelInput.value = draftLayer.label || "";
+        labelInput.addEventListener("input", function() {
+          draftLayer.label = labelInput.value || null;
+        });
+        editorBox.appendChild(fieldWrap("عنوان مخصَّص", labelInput));
+        var addBtn = el("button", {
+          class: "btn btn--secondary",
+          type: "button"
+        }, [ text("+ إضافة طبقة إجمالي") ]);
+        addBtn.addEventListener("click", function() {
+          var candidate = draftLayer;
+          if (!candidate.field) candidate.field = defaultFieldForPlan();
+          if (candidate.scope === "group" && !candidate.resetOn) {
+            showToast("اختر عمود إعادة البدء أولًا", false);
+            return;
           }
-          if (draftColumn.kind === "group") {
-            var groupBySelect = el("select", {
-              class: "select"
-            });
-            groupBySelect.appendChild(el("option", {
-              value: ""
-            }, [ text("اختر عمودًا") ]));
-            textColumnsForPlan().forEach(function(c) {
-              groupBySelect.appendChild(el("option", {
-                value: c
-              }, [ text(cfg.COLUMN_LABELS[c] || c) ]));
-            });
-            groupBySelect.value = draftColumn.groupBy || "";
-            groupBySelect.addEventListener("change", function() {
-              draftColumn.groupBy = groupBySelect.value || null;
-            });
-            columnsListSec.appendChild(fieldWrap("إعادة البدء عند تغيّر", groupBySelect));
+          var sig = PH.exportPlan.configSignature(candidate);
+          var isDup = plan.totals.layers.some(function(l) {
+            return PH.exportPlan.configSignature(l) === sig;
+          });
+          if (isDup) {
+            showToast("هذا الإعداد مضاف بالفعل", false);
+            return;
           }
-          var labelInput = el("input", {
-            class: "input",
-            type: "text",
-            placeholder: "عنوان العمود (اختياري)"
-          });
-          labelInput.value = draftColumn.label || "";
-          labelInput.addEventListener("input", function() {
-            draftColumn.label = labelInput.value || null;
-          });
-          columnsListSec.appendChild(fieldWrap("عنوان العمود", labelInput));
-          var addBtn = el("button", {
-            class: "btn btn--secondary",
-            type: "button"
-          }, [ text("+ إضافة عمود إجمالي") ]);
-          addBtn.addEventListener("click", function() {
-            if (!draftColumn.field) draftColumn.field = defaultFieldForPlan();
-            if (draftColumn.kind === "group" && !draftColumn.groupBy) {
-              showToast("اختر عمود إعادة البدء أولًا", false);
-              return;
-            }
-            var sig = PH.exportPlan.configSignature(draftColumn);
-            var isDup = plan.totals.columns.some(function(c) {
-              return PH.exportPlan.configSignature(c) === sig;
-            });
-            if (isDup) {
-              showToast("هذا الإعداد مضاف بالفعل", false);
-              return;
-            }
-            plan.totals.columns.push(draftColumn);
-            draftColumn = {
-              kind: "cumsum",
+          update(function() {
+            plan.totals.layers.push(candidate);
+            draftLayer = {
+              scope: "block",
+              mode: "closing",
               field: null,
-              basis: "block",
-              groupBy: null,
+              emit: "column",
+              resetOn: null,
               label: null
             };
-            refresh();
           });
-          columnsListSec.appendChild(addBtn);
-        }
+        });
+        editorBox.appendChild(addBtn);
+        columnsListSec.appendChild(editorBox);
         totalsSec.appendChild(columnsListSec);
+        var previewSec = el("div", {
+          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
+        });
+        previewSec.appendChild(el("div", {
+          class: "fs-caption",
+          style: "font-weight:600; color:var(--text-soft);"
+        }, [ text("معاينة النتيجة") ]));
+        var previewBox = el("div", {
+          style: "overflow:auto; max-height:220px; border:1px solid var(--line); border-radius:var(--r-inner); padding:var(--sp-2);"
+        });
+        renderPreviewStrip(previewBox);
+        previewSec.appendChild(previewBox);
+        totalsSec.appendChild(previewSec);
       }
       body.appendChild(totalsSec);
       if (isViewCustomized() && plan.reports.length === 1 && plan.reports[0] === state.activeReportId) {
-        var viewRow = el("label", {
-          class: "row",
-          style: "gap:var(--sp-2); align-items:center; cursor:pointer;"
-        });
-        var viewCb = el("input", {
-          type: "checkbox"
-        });
-        viewCb.checked = plan.applyView;
-        viewCb.addEventListener("change", function() {
-          plan.applyView = viewCb.checked;
-        });
-        viewRow.appendChild(viewCb);
-        viewRow.appendChild(el("span", {}, [ text("تطبيق التصفية/الفرز/البحث الحالي") ]));
-        body.appendChild(viewRow);
+        body.appendChild(switchRow("تطبيق التصفية/الفرز/البحث الحالي", plan.applyView, function(newVal) {
+          update(function() {
+            plan.applyView = newVal;
+          });
+        }));
       }
     }
     function refresh() {
@@ -11119,6 +11770,7 @@ PH.app = function() {
             combination: null,
             rows: sheet.rows,
             columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
+            hiddenColumns: (state.hiddenColumns[repDef.id] || []).slice(),
             settings: resolveSettings("pages"),
             reportLabel: repDef.label,
             printTotalField: repDef.printTotalField
@@ -11146,6 +11798,7 @@ PH.app = function() {
             combination: labelCombo,
             rows: filtered,
             columns: visibleColumnsFor(repDef.id, cfg.printableColumns(repDef.columns)),
+            hiddenColumns: (state.hiddenColumns[repDef.id] || []).slice(),
             settings,
             reportLabel: repDef.label,
             printTotalField: repDef.printTotalField
@@ -11194,6 +11847,7 @@ PH.app = function() {
         };
       });
       var reportLabelForFile = plan.reports.length === 1 ? reportById(plan.reports[0]).label : plan.reports.length + "-تقارير";
+      var descriptor = PH.exportPlan.descriptorForLayers(PH.exportPlan.normalizeTotals(plan.totals).layers);
       var abortToken = {
         cancelled: false
       };
@@ -11201,10 +11855,11 @@ PH.app = function() {
       footer.style.display = "none";
       progressWrap.style.display = "flex";
       currentAbortToken = abortToken;
-      var writer = plan.layout === "zip" ? PH.exporter.exportZipPerSheet : PH.exporter.exportSingleWorkbook;
+      var writer = plan.layout === "zip" ? PH.exporter.exportZipPerSheet : plan.layout === "csv" ? PH.exporter.exportCsvBundle : PH.exporter.exportSingleWorkbook;
       writer(sheets, {
         month: exportMonth,
         reportLabel: reportLabelForFile,
+        descriptor,
         abortToken,
         onProgress: function(done, total, percent) {
           var pct = percent !== undefined ? percent : total ? done / total * 100 : 0;
@@ -11213,6 +11868,7 @@ PH.app = function() {
         }
       }).then(function(name) {
         store.saveSettings("meta", "exportPlan", plan).catch(function() {});
+        state.savedExportPlan = plan;
         removeDialog(overlay);
         showToast("تم تصدير " + name);
       }).catch(function(err) {
@@ -11226,12 +11882,17 @@ PH.app = function() {
       removeDialog(overlay);
     });
     exportBtn.addEventListener("click", doExport);
-    registerDialog(overlay);
-    refresh();
+    registerDialog(overlay, {
+      onClose: function() {
+        if (currentAbortToken) currentAbortToken.cancelled = true;
+      }
+    });
     loadMeta().then(function(meta) {
       applySavedPlan(meta.exportPlan);
       refresh();
-    }).catch(function() {});
+    }).catch(function() {
+      refresh();
+    });
   }
   function runSelfTestOverlay() {
     var overlay = el("div", {
@@ -11276,13 +11937,15 @@ PH.app = function() {
   function init() {
     if (!window.XLSX) showToast("مكتبة Excel غير متاحة — الاستيراد والتصدير يحتاجان اتصالًا أو نسخة محلية.", false);
     if (!window.JSZip) showToast("مكتبة ZIP غير متاحة — تصدير الكل لن يعمل حتى تُحمّل المكتبة.", false);
-    Promise.all([ store.loadPersisted(), store.getAllSettingsScopes() ]).then(function(results) {
+    Promise.all([ store.loadPersisted(), store.getAllSettingsScopes(), loadMeta() ]).then(function(results) {
       var scopes = results[1];
+      var meta = results[2];
       state.settingsOverrides.global = scopes.global;
       state.applyToPrintExport = typeof scopes.global.applyToPrintExport === "boolean" ? scopes.global.applyToPrintExport : true;
       state.settingsOverrides.report = scopes.report;
       state.settingsOverrides.linked = scopes.linked;
       state.hiddenColumns = scopes.hiddenColumns || {};
+      state.savedExportPlan = meta.exportPlan || null;
       migrateSheetScopeSettings(scopes.sheet);
       render();
     }).catch(function() {
