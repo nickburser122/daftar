@@ -416,6 +416,7 @@ body.modal-open { overflow: hidden; }
   font-size: var(--fs-body);
   font-weight: 600;
   white-space: nowrap;
+  transition: background var(--motion-fast), color var(--motion-fast), transform var(--motion-fast), opacity var(--motion-fast);
 }
 
 .btn--primary { background: var(--ink); color: var(--ink-on); }
@@ -551,6 +552,7 @@ body.modal-open { overflow: hidden; }
   background: var(--paper-sunken);
   box-shadow: inset 0 0 0 .5px var(--line-strong);
   color: var(--text-soft);
+  transition: background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
 }
 
 .pill:hover:not([aria-pressed="true"]):not(:disabled) { box-shadow: inset 0 0 0 .5px var(--text-faint); color: var(--text); }
@@ -587,6 +589,7 @@ body.modal-open { overflow: hidden; }
   border-radius: var(--r-round);
   background: var(--line-strong);
   position: relative;
+  transition: background var(--motion-fast);
 }
 
 .switch__track::after {
@@ -615,6 +618,7 @@ input[type="checkbox"] {
   background: var(--paper);
   position: relative;
   cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 
 input[type="checkbox"]:hover { border-color: var(--ink); }
@@ -657,6 +661,7 @@ input[type="checkbox"]:disabled {
   border: none;
   border-radius: var(--r-mid);
   color: var(--text);
+  transition: box-shadow var(--motion-fast);
 }
 
 .input:focus, .select:focus {
@@ -859,6 +864,13 @@ table.grid { table-layout: fixed; }
 @keyframes panel-pop-in {
   from { opacity: 0; transform: scale(0.97) translateY(-2px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.dialog-refresh-fade { animation: dialog-refresh-fade var(--motion-fast); }
+
+@keyframes dialog-refresh-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .builder-row {
@@ -11334,7 +11346,7 @@ PH.app = function() {
       }, [ text(title) ]));
       return wrap;
     }
-    function segmented(options, current, onPick) {
+    function segmented(options, current, onPick, scope) {
       var row = el("div", {
         class: "row",
         style: "gap:var(--sp-1); flex-wrap:wrap;"
@@ -11348,13 +11360,13 @@ PH.app = function() {
         btn.addEventListener("click", function() {
           update(function() {
             onPick(opt.value);
-          });
+          }, scope);
         });
         row.appendChild(btn);
       });
       return row;
     }
-    function selectField(labelText, options, current, onChange) {
+    function selectField(labelText, options, current, onChange, scope) {
       var sel = el("select", {
         class: "select"
       });
@@ -11367,14 +11379,18 @@ PH.app = function() {
       sel.addEventListener("change", function() {
         update(function() {
           onChange(sel.value);
-        });
+        }, scope);
       });
       return fieldWrap(labelText, sel);
     }
-    function update(mutator) {
+    function update(mutator, scope) {
       var scrollTop = body.scrollTop;
       mutator();
-      refresh();
+      if (scope === "totals") {
+        refreshTotals();
+      } else {
+        refresh();
+      }
       body.scrollTop = scrollTop;
     }
     var overlay = el("div", {
@@ -11456,6 +11472,230 @@ PH.app = function() {
     });
     panel.appendChild(progressWrap);
     overlay.appendChild(panel);
+    var mountedTotalsSec = null;
+    function renderTotalsSection() {
+      var totalsSec = section("الإجماليات");
+      if (!numericColumnsForPlan().length) {
+        totalsSec.appendChild(el("div", {
+          class: "fs-caption text-soft"
+        }, [ text("لا يوجد عمود رقمي في التقارير المحدَّدة.") ]));
+      } else {
+        totalsSec.appendChild(switchRow("إضافة صف الإجمالي الكلي", plan.totals.grandTotal, function(newVal) {
+          update(function() {
+            plan.totals.grandTotal = newVal;
+          }, "totals");
+        }));
+        var columnsListSec = el("div", {
+          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
+        });
+        columnsListSec.appendChild(el("div", {
+          class: "fs-caption",
+          style: "font-weight:600; color:var(--text-soft);"
+        }, [ text("طبقات الإجمالي") ]));
+        var emitLabels = {
+          column: "عمود",
+          row: "صف بين البيانات",
+          both: "عمود + صف"
+        };
+        plan.totals.layers.forEach(function(layerCfg) {
+          var summary = PH.exportPlan.layerLabel(layerCfg) + " · " + emitLabels[layerCfg.emit] + (layerCfg.scope === "group" && layerCfg.resetOn ? " · إعادة البدء: " + (cfg.COLUMN_LABELS[layerCfg.resetOn] || layerCfg.resetOn) : "");
+          var row = el("div", {
+            class: "row",
+            style: "justify-content:space-between; align-items:center; gap:var(--sp-2); padding:var(--sp-2); background:var(--paper-sunken); border-radius:var(--r-inner);"
+          });
+          row.appendChild(el("span", {
+            class: "fs-body"
+          }, [ text(summary) ]));
+          var actions = el("div", {
+            class: "row",
+            style: "gap:4px;"
+          });
+          var editBtn = el("button", {
+            class: "btn btn--tertiary",
+            type: "button"
+          }, [ text("تعديل") ]);
+          editBtn.addEventListener("click", function() {
+            update(function() {
+              draftLayer = layerCfg;
+              plan.totals.layers = plan.totals.layers.filter(function(l) {
+                return l !== layerCfg;
+              });
+            }, "totals");
+          });
+          var removeBtn = el("button", {
+            class: "btn btn--ghost btn--icon",
+            type: "button",
+            title: "إزالة"
+          }, [ text("✕") ]);
+          removeBtn.addEventListener("click", function() {
+            update(function() {
+              plan.totals.layers = plan.totals.layers.filter(function(l) {
+                return l !== layerCfg;
+              });
+            }, "totals");
+          });
+          actions.appendChild(editBtn);
+          actions.appendChild(removeBtn);
+          row.appendChild(actions);
+          columnsListSec.appendChild(row);
+        });
+        if (plan.totals.layers.length >= 4) {
+          columnsListSec.appendChild(el("div", {
+            class: "fs-caption",
+            style: "color:var(--brass);"
+          }, [ text("تنبيه: أكثر من 4 طبقات إجمالي قد يجعل الملف صعب القراءة.") ]));
+        }
+        var editorBox = el("div", {
+          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding:var(--sp-2); border:1px dashed var(--line); border-radius:var(--r-inner);"
+        });
+        editorBox.appendChild(totalsDiagram(diagramKindForScope(draftLayer.scope)));
+        editorBox.appendChild(fieldWrap("النطاق", segmented([ {
+          value: "row",
+          label: "لكل صف"
+        }, {
+          value: "page",
+          label: "لكل صفحة"
+        }, {
+          value: "block",
+          label: "لكل كتلة"
+        }, {
+          value: "group",
+          label: "لكل مجموعة"
+        }, {
+          value: "sheet",
+          label: "لكل الورقة"
+        } ], draftLayer.scope, function(v) {
+          draftLayer.scope = v;
+        }, "totals")));
+        editorBox.appendChild(fieldWrap("النوع", segmented([ {
+          value: "cumulative",
+          label: "تراكمي"
+        }, {
+          value: "closing",
+          label: "ختامي"
+        }, {
+          value: "carry",
+          label: "منقول"
+        } ], draftLayer.mode, function(v) {
+          draftLayer.mode = v;
+        }, "totals")));
+        editorBox.appendChild(fieldWrap("الإخراج", segmented([ {
+          value: "column",
+          label: "عمود جديد"
+        }, {
+          value: "row",
+          label: "صف بين البيانات"
+        }, {
+          value: "both",
+          label: "كلاهما"
+        } ], draftLayer.emit, function(v) {
+          draftLayer.emit = v;
+        }, "totals")));
+        editorBox.appendChild(selectField("العمود", numericColumnsForPlan().map(function(f) {
+          return {
+            value: f,
+            label: cfg.COLUMN_LABELS[f] || f
+          };
+        }), draftLayer.field || defaultFieldForPlan() || "", function(v) {
+          draftLayer.field = v || null;
+        }, "totals"));
+        if (draftLayer.scope === "group") {
+          editorBox.appendChild(selectField("إعادة البدء عند تغيّر", [ {
+            value: "",
+            label: "اختر عمودًا"
+          } ].concat(textColumnsForPlan().map(function(c) {
+            return {
+              value: c,
+              label: cfg.COLUMN_LABELS[c] || c
+            };
+          })), draftLayer.resetOn || "", function(v) {
+            draftLayer.resetOn = v || null;
+          }, "totals"));
+        }
+        if (draftLayer.scope === "page") {
+          var rppCaption;
+          if (plan.reports.length === 1) {
+            var repSettings = resolveSettings(plan.reports[0]);
+            rppCaption = "حجم الصفحة الحالي: " + (repSettings && repSettings.rowsPerPage || 24) + " صفًا — يُغيَّر من إعدادات الصفحة";
+          } else {
+            rppCaption = "حجم الصفحة يختلف حسب التقرير المحدَّد — يُغيَّر من إعدادات كل تقرير";
+          }
+          editorBox.appendChild(el("div", {
+            class: "fs-caption text-soft"
+          }, [ text(rppCaption) ]));
+        }
+        var labelInput = el("input", {
+          class: "input",
+          type: "text",
+          placeholder: "عنوان مخصَّص (اختياري)"
+        });
+        labelInput.value = draftLayer.label || "";
+        labelInput.addEventListener("input", function() {
+          draftLayer.label = labelInput.value || null;
+        });
+        editorBox.appendChild(fieldWrap("عنوان مخصَّص", labelInput));
+        var addBtn = el("button", {
+          class: "btn btn--secondary",
+          type: "button"
+        }, [ text("+ إضافة طبقة إجمالي") ]);
+        addBtn.addEventListener("click", function() {
+          var candidate = draftLayer;
+          if (!candidate.field) candidate.field = defaultFieldForPlan();
+          if (candidate.scope === "group" && !candidate.resetOn) {
+            showToast("اختر عمود إعادة البدء أولًا", false);
+            return;
+          }
+          var sig = PH.exportPlan.configSignature(candidate);
+          var isDup = plan.totals.layers.some(function(l) {
+            return PH.exportPlan.configSignature(l) === sig;
+          });
+          if (isDup) {
+            showToast("هذا الإعداد مضاف بالفعل", false);
+            return;
+          }
+          update(function() {
+            plan.totals.layers.push(candidate);
+            draftLayer = {
+              scope: "block",
+              mode: "closing",
+              field: null,
+              emit: "column",
+              resetOn: null,
+              label: null
+            };
+          }, "totals");
+        });
+        editorBox.appendChild(addBtn);
+        columnsListSec.appendChild(editorBox);
+        totalsSec.appendChild(columnsListSec);
+        var previewSec = el("div", {
+          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
+        });
+        previewSec.appendChild(el("div", {
+          class: "fs-caption",
+          style: "font-weight:600; color:var(--text-soft);"
+        }, [ text("معاينة النتيجة") ]));
+        var previewBox = el("div", {
+          style: "overflow:auto; max-height:220px; border:1px solid var(--line); border-radius:var(--r-inner); padding:var(--sp-2);"
+        });
+        renderPreviewStrip(previewBox);
+        previewSec.appendChild(previewBox);
+        totalsSec.appendChild(previewSec);
+      }
+      return totalsSec;
+    }
+    function refreshTotals() {
+      var scrollTop = body.scrollTop;
+      var next = renderTotalsSection();
+      next.classList.add("dialog-refresh-fade");
+      if (mountedTotalsSec && mountedTotalsSec.parentNode) {
+        mountedTotalsSec.replaceWith(next);
+      } else {
+        body.appendChild(next);
+      }
+      mountedTotalsSec = next;
+      body.scrollTop = scrollTop;
+    }
     function buildBody() {
       body.innerHTML = "";
       var includesPages = onlyPages();
@@ -11533,215 +11773,8 @@ PH.app = function() {
         }));
       }
       body.appendChild(layoutSec);
-      var totalsSec = section("الإجماليات");
-      if (!numericColumnsForPlan().length) {
-        totalsSec.appendChild(el("div", {
-          class: "fs-caption text-soft"
-        }, [ text("لا يوجد عمود رقمي في التقارير المحدَّدة.") ]));
-      } else {
-        totalsSec.appendChild(switchRow("إضافة صف الإجمالي الكلي", plan.totals.grandTotal, function(newVal) {
-          update(function() {
-            plan.totals.grandTotal = newVal;
-          });
-        }));
-        var columnsListSec = el("div", {
-          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
-        });
-        columnsListSec.appendChild(el("div", {
-          class: "fs-caption",
-          style: "font-weight:600; color:var(--text-soft);"
-        }, [ text("طبقات الإجمالي") ]));
-        var emitLabels = {
-          column: "عمود",
-          row: "صف بين البيانات",
-          both: "عمود + صف"
-        };
-        plan.totals.layers.forEach(function(layerCfg) {
-          var summary = PH.exportPlan.layerLabel(layerCfg) + " · " + emitLabels[layerCfg.emit] + (layerCfg.scope === "group" && layerCfg.resetOn ? " · إعادة البدء: " + (cfg.COLUMN_LABELS[layerCfg.resetOn] || layerCfg.resetOn) : "");
-          var row = el("div", {
-            class: "row",
-            style: "justify-content:space-between; align-items:center; gap:var(--sp-2); padding:var(--sp-2); background:var(--paper-sunken); border-radius:var(--r-inner);"
-          });
-          row.appendChild(el("span", {
-            class: "fs-body"
-          }, [ text(summary) ]));
-          var actions = el("div", {
-            class: "row",
-            style: "gap:4px;"
-          });
-          var editBtn = el("button", {
-            class: "btn btn--tertiary",
-            type: "button"
-          }, [ text("تعديل") ]);
-          editBtn.addEventListener("click", function() {
-            update(function() {
-              draftLayer = layerCfg;
-              plan.totals.layers = plan.totals.layers.filter(function(l) {
-                return l !== layerCfg;
-              });
-            });
-          });
-          var removeBtn = el("button", {
-            class: "btn btn--ghost btn--icon",
-            type: "button",
-            title: "إزالة"
-          }, [ text("✕") ]);
-          removeBtn.addEventListener("click", function() {
-            update(function() {
-              plan.totals.layers = plan.totals.layers.filter(function(l) {
-                return l !== layerCfg;
-              });
-            });
-          });
-          actions.appendChild(editBtn);
-          actions.appendChild(removeBtn);
-          row.appendChild(actions);
-          columnsListSec.appendChild(row);
-        });
-        if (plan.totals.layers.length >= 4) {
-          columnsListSec.appendChild(el("div", {
-            class: "fs-caption",
-            style: "color:var(--brass);"
-          }, [ text("تنبيه: أكثر من 4 طبقات إجمالي قد يجعل الملف صعب القراءة.") ]));
-        }
-        var editorBox = el("div", {
-          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding:var(--sp-2); border:1px dashed var(--line); border-radius:var(--r-inner);"
-        });
-        editorBox.appendChild(totalsDiagram(diagramKindForScope(draftLayer.scope)));
-        editorBox.appendChild(fieldWrap("النطاق", segmented([ {
-          value: "row",
-          label: "لكل صف"
-        }, {
-          value: "page",
-          label: "لكل صفحة"
-        }, {
-          value: "block",
-          label: "لكل كتلة"
-        }, {
-          value: "group",
-          label: "لكل مجموعة"
-        }, {
-          value: "sheet",
-          label: "لكل الورقة"
-        } ], draftLayer.scope, function(v) {
-          draftLayer.scope = v;
-        })));
-        editorBox.appendChild(fieldWrap("النوع", segmented([ {
-          value: "cumulative",
-          label: "تراكمي"
-        }, {
-          value: "closing",
-          label: "ختامي"
-        }, {
-          value: "carry",
-          label: "منقول"
-        } ], draftLayer.mode, function(v) {
-          draftLayer.mode = v;
-        })));
-        editorBox.appendChild(fieldWrap("الإخراج", segmented([ {
-          value: "column",
-          label: "عمود جديد"
-        }, {
-          value: "row",
-          label: "صف بين البيانات"
-        }, {
-          value: "both",
-          label: "كلاهما"
-        } ], draftLayer.emit, function(v) {
-          draftLayer.emit = v;
-        })));
-        editorBox.appendChild(selectField("العمود", numericColumnsForPlan().map(function(f) {
-          return {
-            value: f,
-            label: cfg.COLUMN_LABELS[f] || f
-          };
-        }), draftLayer.field || defaultFieldForPlan() || "", function(v) {
-          draftLayer.field = v || null;
-        }));
-        if (draftLayer.scope === "group") {
-          editorBox.appendChild(selectField("إعادة البدء عند تغيّر", [ {
-            value: "",
-            label: "اختر عمودًا"
-          } ].concat(textColumnsForPlan().map(function(c) {
-            return {
-              value: c,
-              label: cfg.COLUMN_LABELS[c] || c
-            };
-          })), draftLayer.resetOn || "", function(v) {
-            draftLayer.resetOn = v || null;
-          }));
-        }
-        if (draftLayer.scope === "page") {
-          var rppCaption;
-          if (plan.reports.length === 1) {
-            var repSettings = resolveSettings(plan.reports[0]);
-            rppCaption = "حجم الصفحة الحالي: " + (repSettings && repSettings.rowsPerPage || 24) + " صفًا — يُغيَّر من إعدادات الصفحة";
-          } else {
-            rppCaption = "حجم الصفحة يختلف حسب التقرير المحدَّد — يُغيَّر من إعدادات كل تقرير";
-          }
-          editorBox.appendChild(el("div", {
-            class: "fs-caption text-soft"
-          }, [ text(rppCaption) ]));
-        }
-        var labelInput = el("input", {
-          class: "input",
-          type: "text",
-          placeholder: "عنوان مخصَّص (اختياري)"
-        });
-        labelInput.value = draftLayer.label || "";
-        labelInput.addEventListener("input", function() {
-          draftLayer.label = labelInput.value || null;
-        });
-        editorBox.appendChild(fieldWrap("عنوان مخصَّص", labelInput));
-        var addBtn = el("button", {
-          class: "btn btn--secondary",
-          type: "button"
-        }, [ text("+ إضافة طبقة إجمالي") ]);
-        addBtn.addEventListener("click", function() {
-          var candidate = draftLayer;
-          if (!candidate.field) candidate.field = defaultFieldForPlan();
-          if (candidate.scope === "group" && !candidate.resetOn) {
-            showToast("اختر عمود إعادة البدء أولًا", false);
-            return;
-          }
-          var sig = PH.exportPlan.configSignature(candidate);
-          var isDup = plan.totals.layers.some(function(l) {
-            return PH.exportPlan.configSignature(l) === sig;
-          });
-          if (isDup) {
-            showToast("هذا الإعداد مضاف بالفعل", false);
-            return;
-          }
-          update(function() {
-            plan.totals.layers.push(candidate);
-            draftLayer = {
-              scope: "block",
-              mode: "closing",
-              field: null,
-              emit: "column",
-              resetOn: null,
-              label: null
-            };
-          });
-        });
-        editorBox.appendChild(addBtn);
-        columnsListSec.appendChild(editorBox);
-        totalsSec.appendChild(columnsListSec);
-        var previewSec = el("div", {
-          style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
-        });
-        previewSec.appendChild(el("div", {
-          class: "fs-caption",
-          style: "font-weight:600; color:var(--text-soft);"
-        }, [ text("معاينة النتيجة") ]));
-        var previewBox = el("div", {
-          style: "overflow:auto; max-height:220px; border:1px solid var(--line); border-radius:var(--r-inner); padding:var(--sp-2);"
-        });
-        renderPreviewStrip(previewBox);
-        previewSec.appendChild(previewBox);
-        totalsSec.appendChild(previewSec);
-      }
-      body.appendChild(totalsSec);
+      mountedTotalsSec = renderTotalsSection();
+      body.appendChild(mountedTotalsSec);
       if (isViewCustomized() && plan.reports.length === 1 && plan.reports[0] === state.activeReportId) {
         body.appendChild(switchRow("تطبيق التصفية/الفرز/البحث الحالي", plan.applyView, function(newVal) {
           update(function() {
