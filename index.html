@@ -8422,6 +8422,11 @@ PH.app = function() {
       orientation
     }));
   }
+  function fadeRefresh(el) {
+    el.classList.remove("dialog-refresh-fade");
+    void el.offsetWidth;
+    el.classList.add("dialog-refresh-fade");
+  }
   function resolvePrintTotalField(repDef) {
     if (!repDef.printTotalField || !state.savedExportPlan || !state.savedExportPlan.totals) return repDef.printTotalField;
     var norm = PH.exportPlan.migrateTotals(state.savedExportPlan.totals);
@@ -8727,6 +8732,7 @@ PH.app = function() {
       });
       actionsSec.appendChild(applyAllBtn);
       body.appendChild(actionsSec);
+      fadeRefresh(body);
     }
     buildBody();
     registerDialog(overlay);
@@ -10265,6 +10271,7 @@ PH.app = function() {
       renderFooter();
       body.innerHTML = "";
       if (wiz.step === 0) renderSheetStep(); else if (wiz.step === 1) renderHeaderStep(); else if (wiz.step === 2) renderMappingStep(); else if (wiz.step === 3) renderMergeStep(); else renderReviewStep();
+      fadeRefresh(body);
     }
     function renderSheetStep() {
       body.appendChild(el("div", {
@@ -10867,6 +10874,7 @@ PH.app = function() {
         });
         shell.appendChild(PH.print.buildCalibrationRulerPage(calibration, orientation));
         previewContainer.appendChild(shell);
+        fadeRefresh(previewContainer);
       } else {
         var previewOpts = {
           rowsPerPage: settings.rowsPerPage || 24,
@@ -10899,8 +10907,11 @@ PH.app = function() {
                 class: "print-preview-page",
                 style: "padding:var(--sp-6); text-align:center;"
               }, [ text("تم إلغاء المعاينة (" + result.pageCount + " صفحة).") ]));
+              fadeRefresh(previewContainer);
             }
           });
+        } else {
+          fadeRefresh(previewContainer);
         }
       }
     }
@@ -11785,6 +11796,7 @@ PH.app = function() {
     }
     function refresh() {
       buildBody();
+      fadeRefresh(body);
       var n = sheetCountEstimate();
       footerSummary.textContent = plan.reports.length + " تقرير × حتى " + n + " ورقة";
       exportBtn.disabled = !plan.reports.length || !onlyPages() && !plan.slices.length;
