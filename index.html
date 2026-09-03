@@ -10749,6 +10749,14 @@ PH.app = function() {
       };
     }
     var draftLayer = freshDraftLayer();
+    function previewLayers() {
+      if (!draftLayer.field) return plan.layers;
+      if (draftLayer.reset === "group" && !draftLayer.resetOn) return plan.layers;
+      var draftCopy = {};
+      for (var k in draftLayer) draftCopy[k] = draftLayer[k];
+      draftCopy.id = draftLayer.id || "__draft__";
+      return plan.layers.concat([ draftCopy ]);
+    }
     function exportContractPlan() {
       return {
         reports: plan.reports,
@@ -10898,7 +10906,7 @@ PH.app = function() {
           reports: [ reportId ],
           sheetSplit: "per-slice",
           grandTotal: plan.grandTotal,
-          layers: plan.layers
+          layers: previewLayers()
         };
         var full = PH.exportPlan.buildSheets(previewContractPlan, {
           sheets: [ entry ]
