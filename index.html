@@ -5589,26 +5589,14 @@ window.PH = window.PH || {};
 
 PH.exportPlan = function() {
   var blk = PH.blocks;
-  var paginate = PH.paginate;
   var cfg = PH.config;
   var util = PH.util;
-  var VALID_SCOPES = {
-    row: true,
-    page: true,
-    block: true,
-    group: true,
-    sheet: true
-  };
-  var VALID_MODES = {
-    cumulative: true,
-    closing: true,
-    carry: true
-  };
-  var VALID_EMITS = {
-    column: true,
-    row: true,
-    both: true
-  };
+  var ENGINE_VERSION = "export-engine-2";
+  var TOP_LEVEL_KEYS = { reports: true, sheetSplit: true, grandTotal: true, layers: true };
+  var LAYER_KEYS = { id: true, field: true, reset: true, resetOn: true, running: true, every: true, place: true, label: true };
+  var VALID_RESETS = { none: true, page: true, block: true, group: true };
+  var VALID_PLACES = { column: true, row: true, both: true };
+  var VALID_SHEET_SPLITS = { "per-slice": true, combined: true };
   function sumField(rows, field) {
     if (!field) return 0n;
     return rows.reduce(function(acc, r) {
@@ -5616,153 +5604,147 @@ PH.exportPlan = function() {
       return acc + r[field];
     }, 0n);
   }
-  function legacyKindToLayer(raw) {
-    if (raw.kind === "cumsum") {
-      return {
-        scope: "block",
-        mode: raw.basis === "running" ? "carry" : "closing"
-      };
-    }
-    if (raw.kind === "sum") {
-      return {
-        scope: "sheet",
-        mode: "cumulative"
-      };
-    }
-    if (raw.kind === "group") {
-      return {
-        scope: "group",
-        mode: "closing",
-        resetOn: raw.groupBy || null
-      };
-    }
-    return null;
+  function fieldIsKnownNumeric(repDef, field) {
+    return !!(repDef && field && repDef.columns.indexOf(field) !== -1 && cfg.isNumericColumn(field));
   }
-  function normalizeLayer(raw) {
-    if (!raw) return null;
-    var base;
-    if (raw.scope || raw.mode) {
-      base = {
-        scope: raw.scope,
-        mode: raw.mode,
-        resetOn: raw.resetOn || null
-      };
-    } else if (raw.kind !== undefined) {
-      base = legacyKindToLayer(raw);
-      if (!base) return null;
-    } else {
-      return null;
+  function validateLayer(layer, index, errors) {
+    if (!layer || typeof layer !== "object") {
+      errors.push("layers[" + index + "]: عنصر غير صالح");
+      return;
     }
-    if (!VALID_SCOPES[base.scope] || !VALID_MODES[base.mode]) return null;
-    var emit = VALID_EMITS[raw.emit] ? raw.emit : "column";
-    return {
-      scope: base.scope,
-      mode: base.mode,
-      field: raw.field || null,
-      emit,
-      resetOn: base.scope === "group" ? base.resetOn || null : null,
-      label: raw.label || null,
-      key: raw.key || null
-    };
+    Object.keys(layer).forEach(function(k) {
+      if (!LAYER_KEYS[k]) errors.push("layers[" + index + "]: حقل غير معروف \"" + k + "\"");
+    });
+    if (!layer.id || typeof layer.id !== "string") errors.push("layers[" + index + "]: id مطلوب");
+    if (!layer.field || typeof layer.field !== "string") errors.push("layers[" + index + "]: field مطلوب");
+    if (!VALID_RESETS[layer.reset]) errors.push("layers[" + index + "]: reset غير صالح \"" + layer.reset + "\"");
+    if (layer.reset === "group") {
+      if (!layer.resetOn || typeof layer.resetOn !== "string") errors.push("layers[" + index + "]: resetOn مطلوب مع reset=group");
+    } else if (layer.resetOn !== null && layer.resetOn !== undefined) {
+      errors.push("layers[" + index + "]: resetOn يجب أن يكون null إلا مع reset=group");
+    }
+    if (typeof layer.running !== "boolean") errors.push("layers[" + index + "]: running يجب أن يكون قيمة منطقية");
+    if (typeof layer.every !== "boolean") errors.push("layers[" + index + "]: every يجب أن يكون قيمة منطقية");
+    if (!VALID_PLACES[layer.place]) errors.push("layers[" + index + "]: place غير صالح \"" + layer.place + "\"");
+    if (layer.label !== null && layer.label !== undefined && typeof layer.label !== "string") errors.push("layers[" + index + "]: label يجب أن يكون نصًا أو null");
   }
-  function normalizeTotals(totalsOpts) {
-    var opts = totalsOpts || {};
-    var grandTotal = opts.grandTotal !== false;
-    var rawLayers = [];
-    if (Array.isArray(opts.layers)) {
-      rawLayers = rawLayers.concat(opts.layers);
+  function validatePlan(plan) {
+    var errors = [];
+    if (!plan || typeof plan !== "object") return { ok: false, errors: [ "الخطة ليست كائنًا صالحًا" ] };
+    Object.keys(plan).forEach(function(k) {
+      if (!TOP_LEVEL_KEYS[k]) errors.push("حقل غير معروف على مستوى الخطة: \"" + k + "\"");
+    });
+    if (!Array.isArray(plan.reports) || !plan.reports.length) errors.push("reports مطلوب كمصفوفة غير فارغة");
+    if (!VALID_SHEET_SPLITS[plan.sheetSplit]) errors.push("sheetSplit غير صالح \"" + plan.sheetSplit + "\"");
+    if (!plan.grandTotal || typeof plan.grandTotal !== "object") {
+      errors.push("grandTotal مطلوب");
     } else {
-      (opts.columns || []).forEach(function(c) {
-        rawLayers.push(c);
+      if (typeof plan.grandTotal.enabled !== "boolean") errors.push("grandTotal.enabled يجب أن يكون قيمة منطقية");
+      if (plan.grandTotal.field !== null && plan.grandTotal.field !== undefined && typeof plan.grandTotal.field !== "string") errors.push("grandTotal.field يجب أن يكون نصًا أو null");
+      if (plan.grandTotal.enabled && !plan.grandTotal.field) errors.push("grandTotal.field مطلوب عندما grandTotal.enabled=true");
+    }
+    if (!Array.isArray(plan.layers)) {
+      errors.push("layers مطلوب كمصفوفة");
+    } else {
+      plan.layers.forEach(function(layer, i) {
+        validateLayer(layer, i, errors);
       });
-      if (opts.embedded && opts.embedded.enabled) {
-        rawLayers.push({
-          scope: "page",
-          mode: "closing",
-          emit: "row"
-        });
-        if (opts.embedded.carryForward !== false) {
-          rawLayers.push({
-            scope: "page",
-            mode: "carry",
-            emit: "row"
+    }
+    if (Array.isArray(plan.layers) && !plan.layers.length && plan.grandTotal && plan.grandTotal.enabled === false) {
+      errors.push("الخطة فارغة: لا طبقات إجمالي ولا إجمالي كلي");
+    }
+    if (Array.isArray(plan.reports)) {
+      plan.reports.forEach(function(reportId) {
+        var repDef = cfg.REPORTS_BY_ID[reportId];
+        if (!repDef) {
+          errors.push("تقرير غير معروف: \"" + reportId + "\"");
+          return;
+        }
+        if (Array.isArray(plan.layers)) {
+          plan.layers.forEach(function(layer, i) {
+            if (layer && layer.field && !fieldIsKnownNumeric(repDef, layer.field)) {
+              errors.push("layers[" + i + "]: الحقل \"" + layer.field + "\" غير رقمي أو غير موجود في تقرير \"" + reportId + "\"");
+            }
+            if (layer && layer.reset === "group" && layer.resetOn && repDef.columns.indexOf(layer.resetOn) === -1) {
+              errors.push("layers[" + i + "]: عمود إعادة الضبط \"" + layer.resetOn + "\" غير موجود في تقرير \"" + reportId + "\"");
+            }
           });
         }
-      }
-    }
-    var layers = [];
-    var primaryField = null;
-    rawLayers.forEach(function(raw) {
-      var n = normalizeLayer(raw);
-      if (!n) return;
-      layers.push(n);
-      if (!primaryField && n.field) primaryField = n.field;
-    });
-    return {
-      grandTotal,
-      layers,
-      primaryField
-    };
-  }
-  function migrateTotals(old) {
-    if (!old) return normalizeTotals(null);
-    if (old.columns || old.layers) return normalizeTotals(old);
-    var columns = [];
-    if (old.cumulative === "column") {
-      columns.push({
-        key: "cumulative",
-        kind: "cumsum",
-        field: null,
-        basis: old.basis === "running" ? "running" : "block",
-        label: null
+        if (plan.grandTotal && plan.grandTotal.enabled && plan.grandTotal.field && !fieldIsKnownNumeric(repDef, plan.grandTotal.field)) {
+          errors.push("grandTotal.field \"" + plan.grandTotal.field + "\" غير رقمي أو غير موجود في تقرير \"" + reportId + "\"");
+        }
       });
     }
-    return normalizeTotals({
-      grandTotal: old.grandTotal !== false,
-      embedded: {
-        enabled: old.cumulative === "embedded",
-        carryForward: old.carryForward !== false
-      },
-      columns
-    });
+    return { ok: errors.length === 0, errors: errors };
+  }
+  function clonePlan(plan) {
+    return JSON.parse(JSON.stringify(plan));
+  }
+  function freezePlan(plan) {
+    if (plan && Array.isArray(plan.layers)) {
+      plan.layers.forEach(function(l) {
+        Object.freeze(l);
+      });
+      Object.freeze(plan.layers);
+    }
+    if (plan && plan.grandTotal) Object.freeze(plan.grandTotal);
+    if (plan && plan.reports) Object.freeze(plan.reports);
+    return Object.freeze(plan);
+  }
+  function preparePlan(planInput) {
+    var plan = freezePlan(clonePlan(planInput));
+    var v = validatePlan(plan);
+    if (!v.ok) throw new Error("خطة تصدير غير صالحة: " + v.errors.join("؛ "));
+    return plan;
+  }
+  function serializePlan(plan) {
+    return JSON.stringify(plan);
+  }
+  function parsePlan(json) {
+    return JSON.parse(json);
   }
   function layerKey(layer) {
-    if (layer.key) return layer.key;
-    return "tot__" + layer.scope + "__" + layer.mode + "__" + (layer.field || "") + (layer.resetOn ? "__" + layer.resetOn : "");
+    return "tot__" + layer.id;
   }
-  var MODE_LABELS_AR = {
-    cumulative: "تراكمي",
-    closing: "إجمالي",
-    carry: "منقول تراكمي"
-  };
-  var SCOPE_LABELS_AR = {
-    row: "لكل صف",
-    page: "لكل صفحة",
-    block: "لكل كتلة",
-    group: "لكل مجموعة",
-    sheet: "للورقة كاملة"
-  };
-  function layerLabel(layer) {
+  function layerSignature(layer) {
+    if (!layer) return "invalid";
+    return [ layer.field || "", layer.reset || "", layer.resetOn || "", layer.running ? "1" : "0", layer.every ? "1" : "0", layer.place || "" ].join("|");
+  }
+  var RESET_LABEL_AR = { none: "للورقة كاملة", page: "لكل صفحة", block: "لكل كتلة", group: "لكل مجموعة" };
+  function runningEveryShortLabel(running, every) {
+    if (!running && !every) return "إجمالي";
+    if (!running && every) return "تراكمي";
+    if (running && !every) return "منقول تراكمي";
+    return "تراكمي كلي";
+  }
+  function columnLabel(layer) {
     if (layer.label) return layer.label;
     var fieldLabel = cfg.COLUMN_LABELS[layer.field] || layer.field || "";
-    return [ MODE_LABELS_AR[layer.mode] || layer.mode, fieldLabel, SCOPE_LABELS_AR[layer.scope] || layer.scope ].filter(Boolean).join(" · ");
+    return [ runningEveryShortLabel(layer.running, layer.every), fieldLabel, RESET_LABEL_AR[layer.reset] || layer.reset ].filter(Boolean).join(" · ");
   }
-  function configSignature(raw) {
-    var n = normalizeLayer(raw);
-    if (!n) return "invalid";
-    return [ n.scope, n.mode, n.field || "", n.resetOn || "", n.emit ].join("|");
+  var RESET_NOUN_AR = { none: "الورقة", page: "الصفحة", block: "الكتلة", group: "المجموعة" };
+  function runningEveryPhrase(running, every) {
+    if (!running && !every) return "قيمة واحدة عند نهاية كل وحدة";
+    if (!running && every) return "قيمة تتجدد في كل صف وتبدأ من صفر مع كل وحدة جديدة";
+    if (running && !every) return "قيمة تراكمية منذ بداية الورقة، تظهر فقط عند نهاية كل وحدة";
+    return "قيمة تراكمية منذ بداية الورقة، تتجدد في كل صف";
+  }
+  function resetPhrase(reset, resetOn) {
+    if (reset === "none") return "على مستوى الورقة كاملة بلا إعادة ضبط";
+    if (reset === "group") return "تُعاد لكل مجموعة" + (resetOn ? " حسب عمود \"" + (cfg.COLUMN_LABELS[resetOn] || resetOn) + "\"" : "");
+    return "تُعاد لكل " + (RESET_NOUN_AR[reset] || reset);
+  }
+  var PLACE_PHRASE_AR = { column: "في عمود مستقل", row: "كصف إجمالي بين البيانات", both: "في عمود مستقل وكصف إجمالي معًا" };
+  function explain(layer) {
+    var fieldLabel = cfg.COLUMN_LABELS[layer.field] || layer.field || "";
+    return fieldLabel + ": " + runningEveryPhrase(layer.running, layer.every) + "، " + resetPhrase(layer.reset, layer.resetOn) + "، تظهر " + (PLACE_PHRASE_AR[layer.place] || layer.place) + ".";
   }
   function resolveColumnKeys(layers, reportColumns) {
-    var resolved = [];
-    var seenSignatures = {};
     var usedKeys = {};
     reportColumns.forEach(function(c) {
       usedKeys[c] = "report";
     });
-    layers.forEach(function(layer, idx) {
-      var sig = configSignature(layer);
-      if (seenSignatures[sig]) return;
-      seenSignatures[sig] = true;
+    return layers.map(function(layer) {
       var desired = layerKey(layer);
       var key = desired;
       var suffix = 2;
@@ -5771,91 +5753,69 @@ PH.exportPlan = function() {
         suffix++;
       }
       usedKeys[key] = "claimed";
-      resolved.push({
-        cfg: layer,
-        idx,
-        key
-      });
+      return { cfg: layer, key: key };
     });
-    return resolved;
-  }
-  function resolveLayerField(layer, totalField, primaryField) {
-    return layer.field || primaryField || totalField || null;
   }
   function unitIndices(rows, layer, settings) {
     var n = rows.length;
     var out = new Array(n);
-    if (layer.scope === "row") {
-      for (var i = 0; i < n; i++) out[i] = i;
-    } else if (layer.scope === "page") {
+    if (layer.reset === "page") {
       var rpp = settings && settings.rowsPerPage || 24;
-      for (var i2 = 0; i2 < n; i2++) out[i2] = Math.floor(i2 / rpp);
-    } else if (layer.scope === "block") {
+      for (var i = 0; i < n; i++) out[i] = Math.floor(i / rpp);
+    } else if (layer.reset === "block") {
       var bs = settings && settings.blockSize || settings && settings.rowsPerPage || 24;
-      for (var i3 = 0; i3 < n; i3++) out[i3] = Math.floor(i3 / bs);
-    } else if (layer.scope === "group") {
+      for (var i2 = 0; i2 < n; i2++) out[i2] = Math.floor(i2 / bs);
+    } else if (layer.reset === "group") {
       var resetOn = layer.resetOn;
       var unitIdx = 0, prevNorm = null, hasPrev = false;
-      for (var i4 = 0; i4 < n; i4++) {
+      for (var i3 = 0; i3 < n; i3++) {
         if (!resetOn) {
-          out[i4] = 0;
+          out[i3] = 0;
           continue;
         }
-        var raw = rows[i4][resetOn];
+        var raw = rows[i3][resetOn];
         var normVal = PH.normalize.arabicNormalize(raw === null || raw === undefined ? "" : String(raw));
         if (hasPrev && normVal !== prevNorm) unitIdx++;
-        out[i4] = unitIdx;
+        out[i3] = unitIdx;
         prevNorm = normVal;
         hasPrev = true;
       }
     } else {
-      for (var i5 = 0; i5 < n; i5++) out[i5] = 0;
+      for (var i4 = 0; i4 < n; i4++) out[i4] = 0;
     }
     return out;
   }
   function computeLayerSeries(rows, layer, settings) {
     var units = unitIndices(rows, layer, settings);
     var out = new Array(rows.length);
-    var unitAcc = 0n, running = 0n;
+    var unitAcc = 0n, grandAcc = 0n;
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
       var raw = row[layer.field];
       var v = row.isGrandTotal || row.isSubtotal || typeof raw !== "bigint" ? 0n : raw;
       unitAcc += v;
-      running += v;
+      grandAcc += v;
       var isEnd = i === rows.length - 1 || units[i + 1] !== units[i];
-      if (layer.mode === "cumulative") out[i] = unitAcc; else if (layer.mode === "closing") out[i] = isEnd ? unitAcc : null; else out[i] = isEnd ? running : null;
+      var acc = layer.running ? grandAcc : unitAcc;
+      out[i] = layer.every ? acc : isEnd ? acc : null;
       if (isEnd) unitAcc = 0n;
     }
     return out;
   }
-  function applyTotalsColumns(rows, resolved, totalField, primaryField, settings) {
+  function applyTotalsColumns(rows, resolved, settings) {
     var out = rows.map(util.shallowCopy);
     var keys = [];
     var labelPairs = [];
     var decimalPairs = [];
     resolved.forEach(function(r) {
-      var field = resolveLayerField(r.cfg, totalField, primaryField);
-      if (!field) return;
-      var effectiveLayer = {
-        scope: r.cfg.scope,
-        mode: r.cfg.mode,
-        field,
-        resetOn: r.cfg.resetOn
-      };
-      var series = computeLayerSeries(rows, effectiveLayer, settings);
+      var layer = r.cfg;
+      var series = computeLayerSeries(rows, layer, settings);
       r.series = series;
-      r.resolvedField = field;
-      if (r.cfg.emit === "column" || r.cfg.emit === "both") {
+      if (layer.place === "column" || layer.place === "both") {
         for (var i = 0; i < out.length; i++) out[i][r.key] = series[i];
         keys.push(r.key);
-        labelPairs.push([ r.key, layerLabel({
-          scope: r.cfg.scope,
-          mode: r.cfg.mode,
-          field,
-          label: r.cfg.label
-        }) ]);
-        decimalPairs.push([ r.key, cfg.decimalsForColumn(field) ]);
+        labelPairs.push([ r.key, columnLabel(layer) ]);
+        decimalPairs.push([ r.key, cfg.decimalsForColumn(layer.field) ]);
       }
     });
     var labels = {};
@@ -5866,61 +5826,47 @@ PH.exportPlan = function() {
     decimalPairs.forEach(function(pair) {
       decimals[pair[0]] = pair[1];
     });
-    return {
-      rows: out,
-      decimals,
-      keys,
-      labels
-    };
+    return { rows: out, decimals: decimals, keys: keys, labels: labels };
   }
   function rowLabelFor(layer, unitOrdinal) {
-    var scopeNoun = {
-      page: "الصفحة",
-      block: "الكتلة",
-      group: "المجموعة",
-      sheet: "الورقة",
-      row: "الصف"
-    }[layer.scope] || "الوحدة";
-    if (layer.mode === "carry") {
-      return layer.scope === "page" ? "المنقول من الصفحة السابقة" : "منقول من " + scopeNoun + " السابقة";
+    var noun = RESET_NOUN_AR[layer.reset] || "الوحدة";
+    var isCarryLike = layer.running && !layer.every;
+    if (isCarryLike) {
+      return layer.reset === "page" ? "المنقول من الصفحة السابقة" : "منقول من " + noun + " السابقة";
     }
-    return "إجمالي " + scopeNoun + (layer.scope !== "sheet" ? " " + unitOrdinal : "");
+    return "إجمالي " + noun + (layer.reset !== "none" ? " " + unitOrdinal : "");
   }
   function emitRowLayers(rows, rowLayers, settings, labelColumn) {
     var n = rows.length;
     rowLayers.forEach(function(rl) {
       rl.units = unitIndices(rows, rl.cfg, settings);
     });
-    var closingLayers = rowLayers.filter(function(rl) {
-      return rl.cfg.mode !== "carry";
+    var boundaryLayers = rowLayers.filter(function(rl) {
+      return !(rl.cfg.running && !rl.cfg.every);
     });
     var carryLayers = rowLayers.filter(function(rl) {
-      return rl.cfg.mode === "carry";
+      return rl.cfg.running && !rl.cfg.every;
     });
     var out = [];
     function makeRow(rl, i) {
-      var rowObj = {
-        __totalsRow: true
-      };
+      var rowObj = { __totalsRow: true };
       rowObj[labelColumn] = rowLabelFor(rl.cfg, rl.units[i] + 1);
-      rowObj[rl.resolvedField] = rl.series[i];
-      if (rl.cfg.emit === "both" && rl.key !== rl.resolvedField) rowObj[rl.key] = rl.series[i];
+      rowObj[rl.cfg.field] = rl.series[i];
+      if (rl.cfg.place === "both" && rl.key !== rl.cfg.field) rowObj[rl.key] = rl.series[i];
       return rowObj;
     }
     for (var i = 0; i < n; i++) {
       out.push(rows[i]);
-      var closingHits = closingLayers.filter(function(rl) {
+      var boundaryHits = boundaryLayers.filter(function(rl) {
         return rl.series[i] !== null && rl.series[i] !== undefined;
       });
       var carryHits = i === n - 1 ? [] : carryLayers.filter(function(rl) {
         return rl.series[i] !== null && rl.series[i] !== undefined;
       });
-      closingHits.forEach(function(rl) {
+      boundaryHits.forEach(function(rl) {
         out.push(makeRow(rl, i));
       });
-      if (closingHits.length || carryHits.length) out.push({
-        __totalsRow: true
-      });
+      if (boundaryHits.length || carryHits.length) out.push({ __totalsRow: true });
       carryHits.forEach(function(rl) {
         out.push(makeRow(rl, i));
       });
@@ -5933,40 +5879,28 @@ PH.exportPlan = function() {
     }
     return columns[0];
   }
-  function totalsRowsFor(rows, totalField, settings, totalsOpts, labelColumn, reportColumns) {
-    var norm = normalizeTotals(totalsOpts);
-    var wantGrand = norm.grandTotal;
+  function totalsRowsFor(rows, settings, layers, grandTotal, labelColumn, reportColumns) {
     var hasBaked = rows.some(function(r) {
       return r.isGrandTotal;
     });
-    var resolved = resolveColumnKeys(norm.layers, reportColumns);
-    var withColumns = applyTotalsColumns(rows, resolved, totalField, norm.primaryField, settings);
+    var resolved = resolveColumnKeys(layers, reportColumns);
+    var withColumns = applyTotalsColumns(rows, resolved, settings);
     var out = withColumns.rows;
-    var grandField = norm.primaryField || totalField || null;
     var rowLayers = resolved.filter(function(r) {
-      return (r.cfg.emit === "row" || r.cfg.emit === "both") && r.resolvedField;
+      return r.cfg.place === "row" || r.cfg.place === "both";
     });
-    if (rowLayers.length) {
-      out = emitRowLayers(out, rowLayers, settings, labelColumn);
-    }
-    if (wantGrand && grandField && !hasBaked) {
-      var totalRow = {
-        __totalsRow: true
-      };
+    if (rowLayers.length) out = emitRowLayers(out, rowLayers, settings, labelColumn);
+    if (grandTotal.enabled && grandTotal.field && !hasBaked) {
+      var totalRow = { __totalsRow: true };
       totalRow[labelColumn] = "الإجمالي الكلي";
-      totalRow[grandField] = sumField(rows, grandField);
+      totalRow[grandTotal.field] = sumField(rows, grandTotal.field);
       out = out.concat([ totalRow ]);
     }
-    return {
-      rows: out,
-      extraColumns: withColumns.keys,
-      columnLabels: withColumns.labels,
-      columnDecimals: withColumns.decimals
-    };
+    return { rows: out, extraColumns: withColumns.keys, columnLabels: withColumns.labels, columnDecimals: withColumns.decimals };
   }
   function buildSingleSheet(entry, plan) {
     var labelColumn = firstNonNumericColumn(entry.columns);
-    var result = totalsRowsFor(entry.rows, entry.printTotalField, entry.settings, plan.totals, labelColumn, entry.columns);
+    var result = totalsRowsFor(entry.rows, entry.settings, plan.layers, plan.grandTotal, labelColumn, entry.columns);
     var hidden = entry.hiddenColumns || [];
     var columns = entry.columns.concat(result.extraColumns.filter(function(k) {
       return entry.columns.indexOf(k) === -1 && hidden.indexOf(k) === -1;
@@ -5976,27 +5910,19 @@ PH.exportPlan = function() {
     });
     return {
       name: entry.reportLabel,
-      columns,
+      columns: columns,
       rows: result.rows,
       columnLabels: result.columnLabels,
       columnDecimals: result.columnDecimals,
-      moneyColumns,
-      meta: {
-        reportId: entry.reportId,
-        sliceKey: entry.sliceKey,
-        combination: entry.combination
-      }
+      moneyColumns: moneyColumns,
+      meta: { reportId: entry.reportId, sliceKey: entry.sliceKey, combination: entry.combination }
     };
   }
   function buildCombinedSheet(reportId, group, plan) {
     var first = group[0];
     var labelColumn = firstNonNumericColumn(first.columns);
-    var norm = normalizeTotals(plan.totals);
-    var sliceTotals = {
-      grandTotal: false,
-      layers: norm.layers
-    };
-    var grandField = norm.primaryField || first.printTotalField || null;
+    var sliceGrandTotal = { enabled: false, field: null };
+    var grandField = plan.grandTotal.field;
     var extraColsSeen = [];
     var columnLabels = {};
     var columnDecimals = {};
@@ -6004,7 +5930,7 @@ PH.exportPlan = function() {
     var overall = 0n;
     group.forEach(function(entry) {
       overall += sumField(entry.rows, grandField);
-      var sliceResult = totalsRowsFor(entry.rows, entry.printTotalField, entry.settings, sliceTotals, labelColumn, entry.columns);
+      var sliceResult = totalsRowsFor(entry.rows, entry.settings, plan.layers, sliceGrandTotal, labelColumn, entry.columns);
       sliceResult.extraColumns.forEach(function(k) {
         if (extraColsSeen.indexOf(k) === -1) extraColsSeen.push(k);
       });
@@ -6012,11 +5938,7 @@ PH.exportPlan = function() {
       for (var dk in sliceResult.columnDecimals) columnDecimals[dk] = sliceResult.columnDecimals[dk];
       var dims = entry.combination || {};
       sliceResult.rows.forEach(function(r) {
-        var withDims = r.__totalsRow ? {} : {
-          budget: dims.budget,
-          shift: dims.shift,
-          dispense: dims.dispense
-        };
+        var withDims = r.__totalsRow ? {} : { budget: dims.budget, shift: dims.shift, dispense: dims.dispense };
         for (var rk in r) withDims[rk] = r[rk];
         allRows.push(withDims);
       });
@@ -6026,13 +5948,8 @@ PH.exportPlan = function() {
       return first.columns.indexOf(k) === -1 && hidden.indexOf(k) === -1;
     }));
     var columns = [ "budget", "shift", "dispense" ].concat(baseColumns);
-    if (norm.grandTotal && grandField) {
-      var grandRow = {
-        __totalsRow: true,
-        budget: "الإجمالي الكلي",
-        shift: "",
-        dispense: ""
-      };
+    if (plan.grandTotal.enabled && grandField) {
+      var grandRow = { __totalsRow: true, budget: "الإجمالي الكلي", shift: "", dispense: "" };
       grandRow[grandField] = overall;
       allRows.push(grandRow);
     }
@@ -6041,23 +5958,21 @@ PH.exportPlan = function() {
     });
     return {
       name: first.reportLabel,
-      columns,
+      columns: columns,
       rows: allRows,
-      columnLabels,
-      moneyColumns,
-      meta: {
-        reportId,
-        combined: true
-      }
+      columnLabels: columnLabels,
+      moneyColumns: moneyColumns,
+      meta: { reportId: reportId, combined: true }
     };
   }
-  function buildSheets(plan, input) {
+  function buildSheets(planInput, input) {
+    var plan = preparePlan(planInput);
     var byReport = {};
     (input.sheets || []).forEach(function(e) {
       (byReport[e.reportId] = byReport[e.reportId] || []).push(e);
     });
     var out = [];
-    (plan.reports || []).forEach(function(reportId) {
+    plan.reports.forEach(function(reportId) {
       var group = byReport[reportId];
       if (!group || !group.length) return;
       if (plan.sheetSplit === "combined" && group.length > 1) {
@@ -6070,35 +5985,40 @@ PH.exportPlan = function() {
     });
     return out;
   }
-  var MODE_SLUG = {
-    cumulative: "تراكمي",
-    closing: "ختامي",
-    carry: "منقول"
-  };
-  var SCOPE_SLUG = {
-    row: "صف",
-    page: "صفحة",
-    block: "كتلة",
-    group: "مجموعة",
-    sheet: "ورقة"
-  };
+  function preview(planInput, entry, limit) {
+    var n = limit || 20;
+    var plan = preparePlan(planInput);
+    var sheet = buildSingleSheet(entry, plan);
+    return { columns: sheet.columns, columnLabels: sheet.columnLabels, columnDecimals: sheet.columnDecimals, rows: sheet.rows.slice(0, n) };
+  }
+  var RESET_SLUG = { none: "ورقة", page: "صفحة", block: "كتلة", group: "مجموعة" };
+  function runningEverySlug(running, every) {
+    if (!running && !every) return "ختامي";
+    if (!running && every) return "تراكمي-وحدة";
+    if (running && !every) return "منقول";
+    return "تراكمي-كلي";
+  }
   function descriptorForLayers(layers) {
     if (!layers || !layers.length) return "";
     return layers.map(function(l) {
-      return (MODE_SLUG[l.mode] || l.mode) + "-" + (SCOPE_SLUG[l.scope] || l.scope);
+      return runningEverySlug(l.running, l.every) + "-" + (RESET_SLUG[l.reset] || l.reset);
     }).join("+");
   }
   return {
-    buildSheets,
-    normalizeTotals,
-    migrateTotals,
-    layerKey,
-    layerLabel,
-    configSignature,
-    unitIndices,
-    computeLayerSeries,
-    descriptorForLayers,
-    resolveColumnKeys
+    ENGINE_VERSION: ENGINE_VERSION,
+    buildSheets: buildSheets,
+    preview: preview,
+    validatePlan: validatePlan,
+    explain: explain,
+    serializePlan: serializePlan,
+    parsePlan: parsePlan,
+    layerKey: layerKey,
+    layerSignature: layerSignature,
+    columnLabel: columnLabel,
+    unitIndices: unitIndices,
+    computeLayerSeries: computeLayerSeries,
+    descriptorForLayers: descriptorForLayers,
+    resolveColumnKeys: resolveColumnKeys
   };
 }();
 
@@ -6306,6 +6226,20 @@ PH.exporter = function() {
     XLSX.writeFile(wb, fileName);
     return fileName;
   }
+  function appendProvenanceSheet(wb, plan) {
+    var payload = JSON.stringify({
+      plan: plan,
+      engine: PH.exportPlan.ENGINE_VERSION,
+      generatedAt: new Date().toISOString()
+    }, null, 2);
+    var ws = XLSX.utils.aoa_to_sheet([ [ payload ] ]);
+    var name = "_provenance";
+    XLSX.utils.book_append_sheet(wb, ws, name);
+    var idx = wb.SheetNames.indexOf(name);
+    wb.Workbook = wb.Workbook || {};
+    wb.Workbook.Sheets = wb.Workbook.Sheets || [];
+    wb.Workbook.Sheets[idx] = { Hidden: 1 };
+  }
   function exportSingleWorkbook(sheets, opts) {
     var wb = XLSX.utils.book_new();
     wb.Workbook = {
@@ -6343,6 +6277,7 @@ PH.exporter = function() {
             ext: "xlsx"
           });
           try {
+            if (opts.plan) appendProvenanceSheet(wb, opts.plan);
             XLSX.writeFile(wb, fileName);
           } catch (err) {
             reject(err);
@@ -6409,6 +6344,7 @@ PH.exporter = function() {
           };
           var ws = buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
           XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(sheet.combination, sheet.name, [], sheet.meta && sheet.meta.combined));
+          if (opts.plan) appendProvenanceSheet(wb, opts.plan);
           var buf = XLSX.write(wb, {
             bookType: "xlsx",
             type: "array"
@@ -7222,692 +7158,323 @@ PH.selftest = function() {
     }
     return result;
   }
-  function runExportPlanInvariants() {
+  function runExportEngine() {
     var result = makeResult();
     if (!exportPlan) {
       check(result, false, "PH.exportPlan is not loaded");
       return result;
     }
-    function mkRows(n, field) {
-      var out = [];
-      for (var i = 1; i <= n; i++) {
-        var r = {
-          name: "item" + i,
-          unit: "u"
-        };
-        r[field] = BigInt(i * 100);
-        out.push(r);
+    var ROWS_PER_PAGE = 4, BLOCK_SIZE = 3, N = 10;
+    var UNIT_SEQ = [ "u1", "u1", "u1", "u2", "u2", "u3", "u3", "u3", "u3", "u4" ];
+    var SETTINGS = { rowsPerPage: ROWS_PER_PAGE, blockSize: BLOCK_SIZE };
+    var REPORT_ID = "movement";
+    var FIELD = "value";
+    var GRAND_LABEL = "الإجمالي الكلي";
+    function makeFixtureRows() {
+      var rows = [];
+      for (var i = 0; i < N; i++) {
+        rows.push({
+          name: "بند" + (i + 1),
+          unit: UNIT_SEQ[i],
+          value: BigInt((i + 1) * 1e6),
+          price: BigInt((i + 1) * 1e5)
+        });
       }
-      return out;
+      return rows;
     }
-    (function() {
-      var rows = mkRows(10, "value");
-      var entry = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {
-          budget: "ب",
-          shift: "ص",
-          dispense: "د"
-        },
-        rows,
-        columns: [ "name", "unit", "value" ],
-        settings: {
-          rowsPerPage: 4
-        },
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var plan = {
-        reports: [ "movement" ],
-        sheetSplit: "per-slice",
-        totals: {
-          embedded: {
-            enabled: true,
-            carryForward: true
-          },
-          grandTotal: true,
-          columns: []
-        }
-      };
-      var out = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0].rows;
-      var pages = paginate.buildPagesFromBlocked(rows, 4);
-      var expectedPageTotals = [], carry = 0n;
-      pages.pages.forEach(function(page) {
-        var sum = page.rows.reduce(function(a, slot) {
-          return slot.row && typeof slot.row.value === "bigint" ? a + slot.row.value : a;
-        }, 0n);
-        expectedPageTotals.push(sum);
-        carry += sum;
-      });
-      var pageTotalRows = out.filter(function(r) {
-        return typeof r.name === "string" && r.name.indexOf("إجمالي الصفحة") === 0;
-      });
-      var carryRows = out.filter(function(r) {
-        return r.name === "المنقول من الصفحة السابقة";
-      });
-      var grandRows = out.filter(function(r) {
-        return r.name === "الإجمالي الكلي";
-      });
-      var dataRows = out.filter(function(r) {
-        return /^item/.test(r.name);
-      });
-      check(result, dataRows.length === 10, "embedded: all real rows preserved");
-      check(result, pageTotalRows.length === expectedPageTotals.length, "embedded: one total row per print page");
-      pageTotalRows.forEach(function(r, i) {
-        check(result, r.value === expectedPageTotals[i], "embedded: page " + (i + 1) + " total matches print's own chunk sum");
-      });
-      check(result, carryRows.length === expectedPageTotals.length - 1, "embedded: one carry row between each pair of pages, none after the last");
-      check(result, grandRows.length === 1 && grandRows[0].value === carry, "embedded: grand total equals print's final carryForward");
-      var sumReal = dataRows.reduce(function(a, r) {
-        return a + r.value;
+    function grandTotalOf(rows, field) {
+      return rows.reduce(function(acc, r) {
+        return acc + (typeof r[field] === "bigint" ? r[field] : 0n);
       }, 0n);
-      check(result, sumReal === carry, "embedded: sum of real rows == grand total");
-      var sumPageTotals = pageTotalRows.reduce(function(a, r) {
-        return a + r.value;
-      }, 0n);
-      check(result, sumPageTotals === carry, "embedded: sum of page totals == grand total (carry rows excluded)");
-      var idxLastPage1Row = out.indexOf(dataRows[3]);
-      var idxCarry1 = out.indexOf(carryRows[0]);
-      var idxFirstPage2Row = out.indexOf(dataRows[4]);
-      check(result, idxLastPage1Row < idxCarry1 && idxCarry1 < idxFirstPage2Row, "embedded: carry-into-page-2 sits between page 1's last row and page 2's first row");
-    })();
-    (function() {
-      var rows = mkRows(3, "value");
-      var bakedTotal = rows.reduce(function(a, r) {
-        return a + r.value;
-      }, 0n);
-      rows.push({
-        group: "الإجمالي",
-        value: bakedTotal,
-        isGrandTotal: true
-      });
-      var entry = {
-        reportId: "groups",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "group", "value" ],
-        settings: {},
-        reportLabel: "المجموعات",
-        printTotalField: "value"
+    }
+    function mkLayer(id, field, reset, running, every, place) {
+      return {
+        id: id,
+        field: field,
+        reset: reset,
+        resetOn: reset === "group" ? "unit" : null,
+        running: running,
+        every: every,
+        place: place,
+        label: null
       };
-      var plan = {
-        reports: [ "groups" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns: []
-        }
-      };
-      var out = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0].rows;
-      check(result, out.length === rows.length, "no duplicate grand-total row when the report already bakes one in");
-      check(result, out.filter(function(r) {
-        return r.isGrandTotal;
-      }).length === 1, "exactly one isGrandTotal row survives");
-    })();
-    (function() {
-      var e1 = {
-        reportId: "movement",
+    }
+    function makeEntry(rows) {
+      return {
+        reportId: REPORT_ID,
         sliceKey: "s1",
-        combination: {
-          budget: "مجاني",
-          shift: "صباحي",
-          dispense: "منفذ1"
-        },
-        rows: mkRows(3, "value"),
+        combination: { budget: null, shift: null, dispense: null },
+        rows: rows,
         columns: [ "name", "unit", "value" ],
-        settings: {},
+        hiddenColumns: [],
+        settings: SETTINGS,
         reportLabel: "الحركة",
         printTotalField: "value"
       };
-      var e2 = {
-        reportId: "movement",
-        sliceKey: "s2",
-        combination: {
-          budget: "مساهمة",
-          shift: "مسائي",
-          dispense: "منفذ2"
-        },
-        rows: mkRows(2, "value"),
-        columns: [ "name", "unit", "value" ],
-        settings: {},
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var plan = {
-        reports: [ "movement" ],
-        sheetSplit: "combined",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns: []
-        }
-      };
-      var sheets = exportPlan.buildSheets(plan, {
-        sheets: [ e1, e2 ]
-      });
-      check(result, sheets.length === 1, "combined split produces one sheet for two slices of the same report");
-      var s = sheets[0];
-      check(result, s.columns[0] === "budget" && s.columns[1] === "shift" && s.columns[2] === "dispense", "combined sheet prepends budget/shift/dispense columns");
-      check(result, s.rows.length === 6, "combined sheet: 5 real rows + 1 overall grand total, no per-slice duplicates");
-      var overall = s.rows[s.rows.length - 1];
-      var expectedOverall = 100n + 200n + 300n + (100n + 200n);
-      check(result, overall.value === expectedOverall, "combined sheet's single grand total sums across every slice");
-    })();
-    (function() {
-      var rowsA = [ {
-        name: "item1",
-        unit: "u",
-        value: 100n,
-        qty: 7n
-      }, {
-        name: "item2",
-        unit: "u",
-        value: 200n,
-        qty: 9n
-      } ];
-      var rowsB = [ {
-        name: "item3",
-        unit: "u",
-        value: 300n,
-        qty: 11n
-      } ];
-      var e1 = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {
-          budget: "ب1",
-          shift: "ص",
-          dispense: "د"
-        },
-        rows: rowsA,
-        columns: [ "name", "unit", "value", "qty" ],
-        settings: {},
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var e2 = {
-        reportId: "movement",
-        sliceKey: "s2",
-        combination: {
-          budget: "ب2",
-          shift: "ص",
-          dispense: "د"
-        },
-        rows: rowsB,
-        columns: [ "name", "unit", "value", "qty" ],
-        settings: {},
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var plan = {
-        reports: [ "movement" ],
-        sheetSplit: "combined",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns: [ {
-            key: "qty",
-            kind: "sum",
-            field: "qty",
-            basis: "block"
-          } ]
-        }
-      };
-      var sheets = exportPlan.buildSheets(plan, {
-        sheets: [ e1, e2 ]
-      });
-      var s = sheets[0];
-      var overall = s.rows[s.rows.length - 1];
-      var expectedQtySum = 7n + 9n + 11n;
-      var expectedValueSum = 100n + 200n + 300n;
-      check(result, overall.qty === expectedQtySum, "combined sheet grand total sums the configured totals-column field (qty), not printTotalField (got " + overall.qty + ")");
-      check(result, overall.qty !== expectedValueSum, "combined sheet grand total under a differently-configured field must not equal the printTotalField sum by coincidence of the old bug");
-    })();
-    (function() {
-      var rows = mkRows(6, "value");
-      var entry = {
-        reportId: "yearlyInventory",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "name", "unit", "value" ],
-        settings: {
-          blockSize: null,
-          cumulativeAgg: "sum"
-        },
-        reportLabel: "الجرد",
-        printTotalField: "value"
-      };
-      var plan = {
-        reports: [ "yearlyInventory" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: false,
-          embedded: {
-            enabled: false
-          },
-          columns: [ {
-            key: "cumulative",
-            kind: "cumsum",
-            field: "value",
-            basis: "running"
-          } ]
-        }
-      };
-      var sheets = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      });
-      check(result, sheets[0].columns.indexOf("cumulative") !== -1, "cumsum column injects a cumulative column when the report doesn't already have one");
-      var expected = blk.applyBlocks(rows, {
-        blockSize: null,
-        cumulativeMode: "running",
-        cumulativeAgg: "sum",
-        showPartialBlockTotal: true,
-        valueField: "value"
-      });
-      var out = sheets[0].rows;
-      check(result, out.length === expected.length, "cumsum column row count matches applyBlocks");
-      for (var i = 0; i < out.length; i++) check(result, out[i].cumulative === expected[i].cumulative, "cumsum column cumulative[" + i + "] matches applyBlocks directly");
-    })();
-    (function() {
-      var rows = mkRows(6, "value");
-      var entry = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "name", "unit", "value" ],
-        settings: {
-          blockSize: 3,
-          cumulativeAgg: "sum"
-        },
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var columns = [ {
-        key: "cumulative",
-        kind: "cumsum",
-        field: "value",
-        basis: "block"
-      }, {
-        key: "cumulative2",
-        kind: "cumsum",
-        field: "value",
-        basis: "running"
-      } ];
-      var plan = {
-        reports: [ "movement" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns
-        }
-      };
-      var out = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0].rows;
-      var soloBlock = exportPlan.buildSheets({
-        reports: [ "movement" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns: [ columns[0] ]
-        }
-      }, {
-        sheets: [ entry ]
-      })[0].rows;
-      var soloRunning = exportPlan.buildSheets({
-        reports: [ "movement" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: true,
-          embedded: {
-            enabled: false
-          },
-          columns: [ columns[1] ]
-        }
-      }, {
-        sheets: [ entry ]
-      })[0].rows;
-      var dataRows = out.filter(function(r) {
-        return /^item/.test(r.name);
-      });
-      var soloBlockData = soloBlock.filter(function(r) {
-        return /^item/.test(r.name);
-      });
-      var soloRunningData = soloRunning.filter(function(r) {
-        return /^item/.test(r.name);
-      });
-      check(result, dataRows.length === 6, "two columns: all real rows preserved");
-      for (var i = 0; i < dataRows.length; i++) {
-        check(result, dataRows[i].cumulative === soloBlockData[i].cumulative, "two columns: block-basis series[" + i + "] unperturbed by the second column");
-        check(result, dataRows[i].cumulative2 === soloRunningData[i].cumulative2, "two columns: running-basis series[" + i + "] unperturbed by the first column");
-      }
-      var grandOut = out.filter(function(r) {
-        return r.name === "الإجمالي الكلي";
-      })[0];
-      var grandSolo = soloBlock.filter(function(r) {
-        return r.name === "الإجمالي الكلي";
-      })[0];
-      check(result, grandOut && grandSolo && grandOut.value === grandSolo.value, "two columns: grand total unaffected by the second column (still columns[0].field)");
-      check(result, out[0].columns !== undefined || true, "sanity: rows object shape unaffected");
-      var sheetColumns = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0].columns;
-      var idxCum = sheetColumns.indexOf("cumulative");
-      var idxCum2 = sheetColumns.indexOf("cumulative2");
-      check(result, idxCum !== -1 && idxCum2 !== -1 && idxCum < idxCum2, "two columns: sheet column order matches configuration order (deterministic)");
-      var sumField = dataRows.reduce(function(a, r) {
-        return a + r.value;
-      }, 0n);
-      check(result, grandOut.value === sumField, "block-basis column: sum of source values still equals the grand total");
-    })();
-    (function() {
-      var rows = mkRows(4, "value");
-      var entry = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "name", "unit", "value" ],
-        settings: {},
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
-      var dupColumns = [ {
-        key: "cumulative",
-        kind: "cumsum",
-        field: "value",
-        basis: "block"
-      }, {
-        key: "cumulative2",
-        kind: "cumsum",
-        field: "value",
-        basis: "block"
-      } ];
-      var plan = {
-        reports: [ "movement" ],
-        sheetSplit: "per-slice",
-        totals: {
-          grandTotal: false,
-          embedded: {
-            enabled: false
-          },
-          columns: dupColumns
-        }
-      };
-      var sheet = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0];
-      check(result, sheet.columns.indexOf("cumulative") !== -1, "duplicate config: first configured column is kept");
-      check(result, sheet.columns.indexOf("cumulative2") === -1, "duplicate config: second (identical) column is rejected, not written alongside the first");
-    })();
-    (function() {
-      var rows = mkRows(10, "value");
-      var settings = {
-        rowsPerPage: 4,
-        blockSize: 3
-      };
-      var scopes = [ "row", "page", "block", "group", "sheet" ];
-      var modes = [ "cumulative", "closing", "carry" ];
-      var grand = rows.reduce(function(a, r) {
-        return a + r.value;
-      }, 0n);
-      scopes.forEach(function(scope) {
-        modes.forEach(function(mode) {
-          var layer = {
-            scope,
-            mode,
-            field: "value",
-            resetOn: scope === "group" ? "unit" : null
-          };
-          var series = exportPlan.computeLayerSeries(rows, layer, settings);
-          check(result, series.length === rows.length, "layers[" + scope + "/" + mode + "]: series length matches rows");
-          if (mode === "cumulative") {
-            check(result, series.every(function(v) {
-              return v !== null && v !== undefined;
-            }), "layers[" + scope + "/cumulative]: non-null on every row");
-          } else if (mode === "closing") {
-            var nonNull = series.filter(function(v) {
-              return v !== null;
+    }
+    function isLayerRow(r, field) {
+      return !!r.__totalsRow && r.name !== GRAND_LABEL && r[field] !== undefined;
+    }
+    var PLACES = [ "column", "row", "both" ];
+    var RESETS = [ "none", "page", "block", "group" ];
+    var BOOLS = [ false, true ];
+    var caseCount = 0;
+    PLACES.forEach(function(place) {
+      RESETS.forEach(function(reset) {
+        BOOLS.forEach(function(running) {
+          BOOLS.forEach(function(every) {
+            BOOLS.forEach(function(grandOn) {
+              caseCount++;
+              var label = "matrix[place=" + place + ",reset=" + reset + ",running=" + running + ",every=" + every + ",grand=" + grandOn + "]";
+              var rows = makeFixtureRows();
+              var layer = mkLayer("L1", FIELD, reset, running, every, place);
+              var plan = {
+                reports: [ REPORT_ID ],
+                sheetSplit: "per-slice",
+                grandTotal: { enabled: grandOn, field: grandOn ? FIELD : null },
+                layers: [ layer ]
+              };
+              var entry = makeEntry(rows);
+              var grand = grandTotalOf(rows, FIELD);
+              var sheet;
+              try {
+                sheet = exportPlan.buildSheets(plan, { sheets: [ entry ] })[0];
+              } catch (e) {
+                check(result, false, label + ": buildSheets threw unexpectedly — " + (e && e.message));
+                return;
+              }
+              var outRows = sheet.rows;
+              var dataRows = outRows.filter(function(r) {
+                return !r.__totalsRow;
+              });
+              check(result, dataRows.length === rows.length, label + ": (1) every data row survives");
+              var orderOk = dataRows.length === rows.length && dataRows.every(function(r, i) {
+                return r.name === rows[i].name && r.value === rows[i].value;
+              });
+              check(result, orderOk, label + ": (1) data rows keep original order and values");
+              var series = exportPlan.computeLayerSeries(rows, layer, SETTINGS);
+              if (!running && !every) {
+                var sum = series.reduce(function(a, v) {
+                  return v === null ? a : a + v;
+                }, 0n);
+                check(result, sum === grand, label + ": (2) every:false,running:false entries sum exactly to grand total");
+              } else if (running && !every) {
+                var nonNull = series.filter(function(v) {
+                  return v !== null;
+                });
+                var nonDec = nonNull.every(function(v, i) {
+                  return i === 0 || v >= nonNull[i - 1];
+                });
+                check(result, nonDec, label + ": (3) every:false,running:true entries are non-decreasing");
+                check(result, nonNull.length > 0 && nonNull[nonNull.length - 1] === grand, label + ": (3) every:false,running:true last entry equals grand total");
+              } else if (!running && every) {
+                var units = exportPlan.unitIndices(rows, layer, SETTINGS);
+                var deltaOk = rows.every(function(r, i) {
+                  var prev = i > 0 && units[i] === units[i - 1] ? series[i - 1] : 0n;
+                  return series[i] - prev === r.value;
+                });
+                check(result, deltaOk, label + ": (4) every:true,running:false deltas equal row value within a unit and at unit starts");
+              } else {
+                check(result, series[series.length - 1] === grand, label + ": (5) every:true,running:true last row equals grand total");
+                var diffOk = rows.every(function(r, i) {
+                  return i === 0 ? series[i] === r.value : series[i] - series[i - 1] === r.value;
+                });
+                check(result, diffOk, label + ": (5) every:true,running:true series[i]-series[i-1] equals row[i].field for all i");
+              }
+              var addedCols = sheet.columns.filter(function(c) {
+                return entry.columns.indexOf(c) === -1;
+              });
+              var layerAddedRows = outRows.filter(function(r) {
+                return isLayerRow(r, layer.field);
+              });
+              if (place === "column" || place === "both") {
+                check(result, addedCols.length === 1, label + ": (6) place=" + place + " adds exactly one column");
+              } else {
+                check(result, addedCols.length === 0, label + ": (6) place=row adds zero columns");
+              }
+              if (place === "row" || place === "both") {
+                var nonNullCount = series.filter(function(v) {
+                  return v !== null;
+                }).length;
+                var suppressLast = running && !every;
+                var expectedRowCount = nonNullCount - (suppressLast ? 1 : 0);
+                check(result, layerAddedRows.length === expectedRowCount, label + ": (6) place=" + place + " emits one row per non-null series entry" + (suppressLast ? " minus the suppressed final carry" : ""));
+                if (place === "both" && expectedRowCount > 0) {
+                  var colKey = "tot__" + layer.id;
+                  var lastEmitIdx = -1;
+                  for (var qi = rows.length - 1; qi >= 0; qi--) {
+                    if (series[qi] !== null && !(suppressLast && qi === rows.length - 1)) {
+                      lastEmitIdx = qi;
+                      break;
+                    }
+                  }
+                  var dataRowOut = dataRows[lastEmitIdx];
+                  check(result, dataRowOut[colKey] === series[lastEmitIdx], label + ": (6/both) column value at a boundary row equals the series value there");
+                  var hasMatchingEmittedRow = layerAddedRows.some(function(r) {
+                    return r[layer.field] === series[lastEmitIdx];
+                  });
+                  check(result, hasMatchingEmittedRow, label + ": (6/both) an emitted row carries the same boundary value as the column");
+                }
+              } else {
+                check(result, layerAddedRows.length === 0, label + ": (6) place=column adds zero rows");
+              }
+              var grandRows = outRows.filter(function(r) {
+                return r.__totalsRow && r.name === GRAND_LABEL;
+              });
+              if (grandOn) {
+                check(result, grandRows.length === 1, label + ": (8) grand total row appears exactly once when enabled");
+                check(result, grandRows.length === 1 && grandRows[0][FIELD] === grand, label + ": (8) grand total equals the data-row sum of the field");
+              } else {
+                check(result, grandRows.length === 0, label + ": (8) no grand total row when disabled");
+              }
+              var hasColumnOutput = addedCols.length > 0;
+              var hasRowOutput = layerAddedRows.length > 0;
+              var isVacuousCarryRow = reset === "none" && running && !every && place === "row";
+              if (!isVacuousCarryRow) {
+                check(result, hasColumnOutput || hasRowOutput, label + ": (9) the configured layer yields observable output");
+              }
+              var json1 = JSON.stringify(plan);
+              var parsedBack = exportPlan.parsePlan(exportPlan.serializePlan(plan));
+              check(result, JSON.stringify(parsedBack) === json1, label + ": (10) parsePlan(serializePlan(plan)) deep-equals plan");
             });
-            var sum = nonNull.reduce(function(a, v) {
-              return a + v;
-            }, 0n);
-            check(result, sum === grand, "layers[" + scope + "/closing]: closings sum to the grand total");
-          } else {
-            var nn = series.filter(function(v) {
-              return v !== null;
-            });
-            check(result, nn.length > 0 && nn[nn.length - 1] === grand, "layers[" + scope + "/carry]: last non-null value equals the grand total");
-            check(result, nn.every(function(v, i) {
-              return i === 0 || v >= nn[i - 1];
-            }), "layers[" + scope + "/carry]: monotonically non-decreasing");
-          }
+          });
         });
       });
-    })();
-    (function() {
-      var rows = mkRows(10, "value");
-      var settings = {
-        rowsPerPage: 4
-      };
-      var series = exportPlan.computeLayerSeries(rows, {
-        scope: "page",
-        mode: "closing",
-        field: "value"
-      }, settings);
-      var nonNull = series.filter(function(v) {
-        return v !== null;
+    });
+    check(result, caseCount === 96, "generated conformance matrix produced exactly 96 cases (3×4×2×2×2)");
+    RESETS.forEach(function(reset) {
+      BOOLS.forEach(function(running) {
+        BOOLS.forEach(function(every) {
+          var label = "twoLayer[reset=" + reset + ",running=" + running + ",every=" + every + "]";
+          var rows = makeFixtureRows();
+          var layerA = mkLayer("A", "value", reset, running, every, "column");
+          var layerB = mkLayer("B", "price", reset, running, every, "column");
+          var seriesAAlone = exportPlan.computeLayerSeries(rows, layerA, SETTINGS);
+          var seriesBAlone = exportPlan.computeLayerSeries(rows, layerB, SETTINGS);
+          var plan2 = {
+            reports: [ REPORT_ID ],
+            sheetSplit: "per-slice",
+            grandTotal: { enabled: false, field: null },
+            layers: [ layerA, layerB ]
+          };
+          var entry2 = makeEntry(rows);
+          var sheet2 = exportPlan.buildSheets(plan2, { sheets: [ entry2 ] })[0];
+          var dataRows2 = sheet2.rows.filter(function(r) {
+            return !r.__totalsRow;
+          });
+          var colA = dataRows2.map(function(r) {
+            return r["tot__A"];
+          });
+          var colB = dataRows2.map(function(r) {
+            return r["tot__B"];
+          });
+          var matchA = colA.length === seriesAAlone.length && colA.every(function(v, i) {
+            return v === seriesAAlone[i];
+          });
+          var matchB = colB.length === seriesBAlone.length && colB.every(function(v, i) {
+            return v === seriesBAlone[i];
+          });
+          check(result, matchA, label + ": (7) two-layer field A series is bit-identical to computing it alone");
+          check(result, matchB, label + ": (7) two-layer field B series is bit-identical to computing it alone");
+        });
       });
-      var pages = paginate.buildPagesFromBlocked(rows, 4);
-      var expected = pages.pages.map(function(page) {
-        return page.rows.reduce(function(a, slot) {
-          return slot.row && typeof slot.row.value === "bigint" ? a + slot.row.value : a;
-        }, 0n);
-      });
-      check(result, nonNull.length === expected.length, "scope:page unit count matches paginate.buildPagesFromBlocked");
-      for (var i = 0; i < expected.length; i++) check(result, nonNull[i] === expected[i], "scope:page chunk[" + i + "] is byte-identical to paginate's own chunk sum");
-    })();
-    (function() {
-      var rows = mkRows(10, "value");
-      var settings = {
-        blockSize: null,
-        rowsPerPage: 4
-      };
-      var series = exportPlan.computeLayerSeries(rows, {
-        scope: "block",
-        mode: "closing",
-        field: "value"
-      }, settings);
-      var nonNull = series.filter(function(v) {
-        return v !== null;
-      });
-      check(result, nonNull.length === 3, "scope:block with blockSize:null falls back to rowsPerPage instead of collapsing to a single trailing total");
-    })();
-    (function() {
-      var rows = mkRows(6, "value").map(function(r, i) {
-        r.qty = BigInt((i + 1) * 3);
-        return r;
-      });
-      var settings = {
-        blockSize: 3
-      };
-      var layerValue = {
-        scope: "block",
-        mode: "closing",
-        field: "value"
-      };
-      var layerQty = {
-        scope: "block",
-        mode: "closing",
-        field: "qty"
-      };
-      var seriesValueTogether = exportPlan.computeLayerSeries(rows, layerValue, settings);
-      var seriesQtyTogether = exportPlan.computeLayerSeries(rows, layerQty, settings);
-      var seriesValueAlone = exportPlan.computeLayerSeries(rows, layerValue, settings);
-      var seriesQtyAlone = exportPlan.computeLayerSeries(rows, layerQty, settings);
-      check(result, seriesValueTogether.every(function(v, i) {
-        return v === seriesValueAlone[i];
-      }), "two layers with different fields: value series is bit-identical whether computed alongside qty or alone");
-      check(result, seriesQtyTogether.every(function(v, i) {
-        return v === seriesQtyAlone[i];
-      }), "two layers with different fields: qty series is bit-identical whether computed alongside value or alone");
-    })();
-    (function() {
-      var rows = mkRows(6, "value").map(function(r, i) {
-        r.qty = BigInt((i + 1) * 3);
-        return r;
-      });
-      var entry = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "name", "unit", "value", "qty" ],
-        settings: {
-          blockSize: 3
-        },
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
+    });
+    (function e2ePerPageTotalEmbedded() {
+      var rows = makeFixtureRows();
+      var layer = mkLayer("L1", FIELD, "page", false, false, "row");
       var plan = {
-        reports: [ "movement" ],
+        reports: [ REPORT_ID ],
         sheetSplit: "per-slice",
-        totals: {
-          grandTotal: false,
-          embedded: {
-            enabled: false
-          },
-          columns: [ {
-            scope: "block",
-            mode: "closing",
-            field: "qty",
-            emit: "column"
-          } ]
-        }
+        grandTotal: { enabled: false, field: null },
+        layers: [ layer ]
       };
-      var sheet = exportPlan.buildSheets(plan, {
-        sheets: [ entry ]
-      })[0];
-      var key = exportPlan.layerKey({
-        scope: "block",
-        mode: "closing",
-        field: "qty",
-        key: null
+      var entry = makeEntry(rows);
+      var sheet = exportPlan.buildSheets(plan, { sheets: [ entry ] })[0];
+      var ws = PH.exporter.buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
+      var colIdx = sheet.columns.indexOf(FIELD);
+      var layerRows = sheet.rows.filter(function(r) {
+        return isLayerRow(r, FIELD);
       });
-      check(result, sheet.columns.indexOf(key) !== -1, "emitted layer key is present in the sheet's columns");
-      check(result, !!sheet.columnLabels[key], "emitted layer key has an auto-generated column label");
-      check(result, sheet.moneyColumns.indexOf(key) !== -1, "emitted layer key is present in sheet.moneyColumns");
+      check(result, layerRows.length === 3, "e2e[per-page total, embedded]: three page-total rows for a 10-row/4-per-page fixture");
+      var expectedPageSums = [ 1000, 2600, 1900 ];
+      var ok = layerRows.length === 3;
+      layerRows.forEach(function(r, i) {
+        var idx = sheet.rows.indexOf(r);
+        var cellRef = XLSX.utils.encode_cell({ r: idx + 1, c: colIdx });
+        var cellValue = ws[cellRef] && ws[cellRef].v;
+        if (cellValue !== expectedPageSums[i]) ok = false;
+      });
+      check(result, ok, "e2e[per-page total, embedded]: each embedded total equals that page's own sum in the real worksheet cells (1000, 2600, 1900)");
     })();
-    (function() {
-      var rows = mkRows(4, "value");
-      var hiddenEntry = {
-        reportId: "movement",
-        sliceKey: "s1",
-        combination: {},
-        rows,
-        columns: [ "name", "unit", "value" ],
-        hiddenColumns: [ "cumulative" ],
-        settings: {},
-        reportLabel: "الحركة",
-        printTotalField: "value"
-      };
+    (function e2eTrueCumulativeOwnColumn() {
+      var rows = makeFixtureRows();
+      var layer = mkLayer("L1", FIELD, "page", true, false, "column");
       var plan = {
-        reports: [ "movement" ],
+        reports: [ REPORT_ID ],
         sheetSplit: "per-slice",
-        totals: {
-          grandTotal: false,
-          embedded: {
-            enabled: false
-          },
-          columns: [ {
-            key: "cumulative",
-            kind: "cumsum",
-            field: "value",
-            basis: "block"
-          } ]
-        }
+        grandTotal: { enabled: false, field: null },
+        layers: [ layer ]
       };
-      var hiddenSheet = exportPlan.buildSheets(plan, {
-        sheets: [ hiddenEntry ]
-      })[0];
-      check(result, hiddenSheet.columns.indexOf("cumulative") === -1, "a layer whose key collides with a hidden report column does not resurrect that column");
-      var visibleEntry = Object.assign({}, hiddenEntry, {
-        hiddenColumns: undefined
-      });
-      var visibleSheet = exportPlan.buildSheets(plan, {
-        sheets: [ visibleEntry ]
-      })[0];
-      check(result, visibleSheet.columns.indexOf("cumulative") !== -1, "sanity: without hiddenColumns the same layer key is added normally");
+      var entry = makeEntry(rows);
+      var sheet = exportPlan.buildSheets(plan, { sheets: [ entry ] })[0];
+      var ws = PH.exporter.buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
+      var colKey = "tot__L1";
+      var colIdx = sheet.columns.indexOf(colKey);
+      check(result, colIdx !== -1, "e2e[true cumulative, own column]: a dedicated column is added");
+      var page3RowIdx = sheet.rows.indexOf(sheet.rows.filter(function(r) {
+        return !r.__totalsRow;
+      })[9]);
+      var cellRef = XLSX.utils.encode_cell({ r: page3RowIdx + 1, c: colIdx });
+      var cellValue = ws[cellRef] && ws[cellRef].v;
+      check(result, cellValue === 5500, "e2e[true cumulative, own column]: page 3's value in the real worksheet cell equals pages 1+2+3 (5500)");
+      var page1RowIdx = sheet.rows.indexOf(sheet.rows.filter(function(r) {
+        return !r.__totalsRow;
+      })[3]);
+      var cellRef1 = XLSX.utils.encode_cell({ r: page1RowIdx + 1, c: colIdx });
+      var cellValue1 = ws[cellRef1] && ws[cellRef1].v;
+      check(result, cellValue1 === 1000, "e2e[true cumulative, own column]: page 1's boundary value in the real worksheet cell equals pages 1 alone (1000)");
     })();
-    (function() {
-      var norm = exportPlan.normalizeTotals({
-        columns: [ {
-          kind: "cumsum",
-          basis: "running",
-          field: "x"
-        } ]
+    (function e2eRollingSumBoth() {
+      var rows = makeFixtureRows();
+      var layer = mkLayer("L1", FIELD, "none", true, true, "both");
+      var plan = {
+        reports: [ REPORT_ID ],
+        sheetSplit: "per-slice",
+        grandTotal: { enabled: false, field: null },
+        layers: [ layer ]
+      };
+      var entry = makeEntry(rows);
+      var sheet = exportPlan.buildSheets(plan, { sheets: [ entry ] })[0];
+      var ws = PH.exporter.buildWorksheet(sheet.rows, sheet.columns, sheet.columnLabels, sheet.moneyColumns, sheet.columnDecimals);
+      var colKey = "tot__L1";
+      var colIdx = sheet.columns.indexOf(colKey);
+      var dataRowsOut = sheet.rows.filter(function(r) {
+        return !r.__totalsRow;
       });
-      var layer = norm.layers[0];
-      check(result, layer.scope === "block" && layer.mode === "carry" && layer.field === "x" && layer.emit === "column", "normalizeTotals maps legacy {kind:cumsum, basis:running} to {scope:block, mode:carry} exactly as before the refactor");
-    })();
-    (function() {
-      var normA = exportPlan.normalizeTotals({
-        columns: []
+      var expectedRunning = [];
+      var acc = 0;
+      rows.forEach(function(r, i) {
+        acc += (i + 1) * 100;
+        expectedRunning.push(acc);
       });
-      var normB = exportPlan.normalizeTotals({
-        columns: [ {
-          kind: "cumsum",
-          basis: "block",
-          field: "value"
-        } ]
+      var colOk = dataRowsOut.every(function(r, i) {
+        var idx = sheet.rows.indexOf(r);
+        var cellRef = XLSX.utils.encode_cell({ r: idx + 1, c: colIdx });
+        var v = ws[cellRef] && ws[cellRef].v;
+        return v === expectedRunning[i];
       });
-      var descA = exportPlan.descriptorForLayers(normA.layers);
-      var descB = exportPlan.descriptorForLayers(normB.layers);
-      check(result, descA !== descB, "two plans differing only in totals produce different descriptors");
-      var nameA = PH.exporter.buildFileName({
-        month: "2026-07",
-        reportLabel: "الحركة",
-        combination: {
-          budget: null,
-          shift: null,
-          dispense: null
-        },
-        descriptor: descA,
-        ext: "xlsx"
+      check(result, colOk, "e2e[rolling sum, both]: the per-row rolling column matches the running grand total on every real worksheet row");
+      var layerRows = sheet.rows.filter(function(r) {
+        return isLayerRow(r, FIELD);
       });
-      var nameB = PH.exporter.buildFileName({
-        month: "2026-07",
-        reportLabel: "الحركة",
-        combination: {
-          budget: null,
-          shift: null,
-          dispense: null
-        },
-        descriptor: descB,
-        ext: "xlsx"
-      });
-      check(result, nameA !== nameB, "two exports whose plans differ only in totals produce different buildFileName results");
+      check(result, layerRows.length === N, "e2e[rolling sum, both]: an embedded row follows every data row since the value updates on every row");
+      var lastLayerRow = layerRows[layerRows.length - 1];
+      var lastIdx = sheet.rows.indexOf(lastLayerRow);
+      var lastCellRef = XLSX.utils.encode_cell({ r: lastIdx + 1, c: colIdx !== -1 ? sheet.columns.indexOf(FIELD) : 0 });
+      var lastFieldColIdx = sheet.columns.indexOf(FIELD);
+      var lastCellRefField = XLSX.utils.encode_cell({ r: lastIdx + 1, c: lastFieldColIdx });
+      var lastCellValue = ws[lastCellRefField] && ws[lastCellRefField].v;
+      check(result, lastCellValue === 5500, "e2e[rolling sum, both]: the final embedded row's value equals the grand total (5500) in the real worksheet cell");
     })();
     return result;
   }
@@ -8114,8 +7681,8 @@ PH.selftest = function() {
       regressions: function() {
         return runRegressionInvariants();
       },
-      exportPlan: function() {
-        return runExportPlanInvariants();
+      exportEngine: function() {
+        return runExportEngine();
       },
       columns: function() {
         return runColumnChooserInvariants();
@@ -8164,7 +7731,7 @@ PH.selftest = function() {
     runAverageInvariants,
     runMovingAverageInvariants,
     runRegressionInvariants,
-    runExportPlanInvariants,
+    runExportEngine,
     runColumnChooserInvariants,
     runNormalizeInvariants,
     runMatrixInvariants,
@@ -8428,14 +7995,6 @@ PH.app = function() {
     el.classList.add("dialog-refresh-fade");
   }
   function resolvePrintTotalField(repDef) {
-    if (!repDef.printTotalField || !state.savedExportPlan || !state.savedExportPlan.totals) return repDef.printTotalField;
-    var norm = PH.exportPlan.migrateTotals(state.savedExportPlan.totals);
-    for (var i = 0; i < norm.layers.length; i++) {
-      var layer = norm.layers[i];
-      if ((layer.emit === "row" || layer.emit === "both") && layer.field && repDef.columns.indexOf(layer.field) !== -1) {
-        return layer.field;
-      }
-    }
     return repDef.printTotalField;
   }
   function drawerSection(titleText) {
@@ -11134,18 +10693,11 @@ PH.app = function() {
       layout: "one-workbook",
       sheetSplit: "per-slice",
       applyView: !!state.applyToPrintExport,
-      totals: {
-        grandTotal: true,
-        layers: []
-      }
-    };
-    var draftLayer = {
-      scope: "block",
-      mode: "closing",
-      field: null,
-      emit: "column",
-      resetOn: null,
-      label: null
+      grandTotal: {
+        enabled: true,
+        field: null
+      },
+      layers: []
     };
     function reportById(id) {
       return cfg.REPORTS_BY_ID[id];
@@ -11170,6 +10722,40 @@ PH.app = function() {
     function defaultFieldForPlan() {
       var firstRep = reportById(plan.reports[0]);
       return firstRep && firstRep.printTotalField || numericColumnsForPlan()[0] || null;
+    }
+    function ensureGrandTotalValid() {
+      if (plan.grandTotal.enabled && (!plan.grandTotal.field || numericColumnsForPlan().indexOf(plan.grandTotal.field) === -1)) {
+        plan.grandTotal.field = defaultFieldForPlan();
+        if (!plan.grandTotal.field) plan.grandTotal.enabled = false;
+      }
+    }
+    plan.grandTotal.field = defaultFieldForPlan();
+    if (!plan.grandTotal.field) plan.grandTotal.enabled = false;
+    var layerIdSeq = 0;
+    function makeLayerId() {
+      layerIdSeq++;
+      return "l" + layerIdSeq + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    }
+    function freshDraftLayer() {
+      return {
+        id: null,
+        field: defaultFieldForPlan(),
+        reset: "block",
+        resetOn: null,
+        running: false,
+        every: false,
+        place: "column",
+        label: null
+      };
+    }
+    var draftLayer = freshDraftLayer();
+    function exportContractPlan() {
+      return {
+        reports: plan.reports,
+        sheetSplit: plan.sheetSplit,
+        grandTotal: plan.grandTotal,
+        layers: plan.layers
+      };
     }
     function textColumnsForPlan() {
       var firstRep = reportById(plan.reports[0]);
@@ -11204,7 +10790,24 @@ PH.app = function() {
       if (saved.layout === "one-workbook" || saved.layout === "zip" || saved.layout === "csv") plan.layout = saved.layout;
       if (saved.sheetSplit === "per-slice" || saved.sheetSplit === "combined") plan.sheetSplit = saved.sheetSplit;
       if (typeof saved.applyView === "boolean") plan.applyView = saved.applyView;
-      if (saved.totals) plan.totals = PH.exportPlan.migrateTotals(saved.totals);
+      if (saved.grandTotal || saved.layers) {
+        var candidate = {
+          reports: plan.reports,
+          sheetSplit: plan.sheetSplit,
+          grandTotal: saved.grandTotal,
+          layers: saved.layers
+        };
+        var v = PH.exportPlan.validatePlan(candidate);
+        if (v.ok) {
+          plan.grandTotal = saved.grandTotal;
+          plan.layers = saved.layers;
+        } else {
+          plan.grandTotal.field = defaultFieldForPlan();
+          showToast("تعذّرت قراءة إعدادات الإجمالي المحفوظة، تمت إعادة التعيين للافتراضي.", false);
+        }
+      } else if (saved.totals) {
+        showToast("تعذّرت قراءة إعدادات الإجمالي المحفوظة (صيغة قديمة)، تمت إعادة التعيين للافتراضي.", false);
+      }
     }
     function sheetCountEstimate() {
       var n = 0;
@@ -11239,12 +10842,12 @@ PH.app = function() {
       }, [ text("— " + disabledReason) ]));
       return row;
     }
-    function diagramKindForScope(scope) {
-      if (scope === "sheet") return "sum";
-      if (scope === "group") return "group";
+    function diagramKindForReset(reset) {
+      if (reset === "none") return "sum";
+      if (reset === "group") return "group";
       return "cumsum";
     }
-    function buildPreviewSheet() {
+    function buildPreviewData() {
       try {
         var reportId = plan.reports[0];
         if (!reportId) return null;
@@ -11291,47 +10894,49 @@ PH.app = function() {
             printTotalField: repDef.printTotalField
           };
         }
-        var previewPlan = {
+        var previewContractPlan = {
           reports: [ reportId ],
           sheetSplit: "per-slice",
-          totals: plan.totals
+          grandTotal: plan.grandTotal,
+          layers: plan.layers
         };
-        var sheets = PH.exportPlan.buildSheets(previewPlan, {
+        var full = PH.exportPlan.buildSheets(previewContractPlan, {
           sheets: [ entry ]
-        });
-        return sheets[0] || null;
+        })[0];
+        var preview = PH.exportPlan.preview(previewContractPlan, entry, 20);
+        return { preview, fullCount: full ? full.rows.length : preview.rows.length };
       } catch (err) {
         return null;
       }
     }
     function renderPreviewStrip(container) {
       container.innerHTML = "";
-      var sheet = buildPreviewSheet();
-      if (!sheet || !sheet.rows.length) {
+      var data = buildPreviewData();
+      if (!data || !data.preview.rows.length) {
         container.appendChild(el("div", {
           class: "fs-caption text-soft"
         }, [ text("لا توجد بيانات كافية لمعاينة النتيجة.") ]));
         return;
       }
-      var previewRows = sheet.rows.slice(0, 10);
+      var preview = data.preview;
       var table = el("table", {
         style: "width:100%; border-collapse:collapse; font-size:12px;"
       });
       var thead = el("thead");
       var headRow = el("tr");
-      sheet.columns.forEach(function(c) {
+      preview.columns.forEach(function(c) {
         headRow.appendChild(el("th", {
           style: "text-align:start; padding:4px 6px; border-bottom:1px solid var(--line); color:var(--text-soft); font-weight:600; white-space:nowrap;"
-        }, [ text(sheet.columnLabels[c] || cfg.COLUMN_LABELS[c] || c) ]));
+        }, [ text(preview.columnLabels[c] || cfg.COLUMN_LABELS[c] || c) ]));
       });
       thead.appendChild(headRow);
       table.appendChild(thead);
       var tbody = el("tbody");
-      previewRows.forEach(function(row) {
+      preview.rows.forEach(function(row) {
         var tr = el("tr", row.__totalsRow ? {
           style: "background:var(--paper-sunken); font-weight:600;"
         } : {});
-        sheet.columns.forEach(function(c) {
+        preview.columns.forEach(function(c) {
           tr.appendChild(el("td", {
             style: "padding:4px 6px; border-bottom:1px solid var(--line); white-space:nowrap;"
           }, [ text(PH.format.cell(row[c], c)) ]));
@@ -11340,11 +10945,11 @@ PH.app = function() {
       });
       table.appendChild(tbody);
       container.appendChild(table);
-      if (sheet.rows.length > previewRows.length) {
+      if (data.fullCount > preview.rows.length) {
         container.appendChild(el("div", {
           class: "fs-caption text-soft",
           style: "margin-top:4px;"
-        }, [ text("+ " + (sheet.rows.length - previewRows.length) + " صفوف أخرى") ]));
+        }, [ text("+ " + (data.fullCount - preview.rows.length) + " صفوف أخرى") ]));
       }
     }
     function section(title) {
@@ -11491,11 +11096,22 @@ PH.app = function() {
           class: "fs-caption text-soft"
         }, [ text("لا يوجد عمود رقمي في التقارير المحدَّدة.") ]));
       } else {
-        totalsSec.appendChild(switchRow("إضافة صف الإجمالي الكلي", plan.totals.grandTotal, function(newVal) {
+        totalsSec.appendChild(switchRow("إضافة صف الإجمالي الكلي", plan.grandTotal.enabled, function(newVal) {
           update(function() {
-            plan.totals.grandTotal = newVal;
+            plan.grandTotal.enabled = newVal;
+            if (newVal && !plan.grandTotal.field) plan.grandTotal.field = defaultFieldForPlan();
           }, "totals");
         }));
+        if (plan.grandTotal.enabled) {
+          totalsSec.appendChild(selectField("عمود الإجمالي الكلي", numericColumnsForPlan().map(function(f) {
+            return {
+              value: f,
+              label: cfg.COLUMN_LABELS[f] || f
+            };
+          }), plan.grandTotal.field || "", function(v) {
+            plan.grandTotal.field = v || null;
+          }, "totals"));
+        }
         var columnsListSec = el("div", {
           style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
         });
@@ -11503,20 +11119,14 @@ PH.app = function() {
           class: "fs-caption",
           style: "font-weight:600; color:var(--text-soft);"
         }, [ text("طبقات الإجمالي") ]));
-        var emitLabels = {
-          column: "عمود",
-          row: "صف بين البيانات",
-          both: "عمود + صف"
-        };
-        plan.totals.layers.forEach(function(layerCfg) {
-          var summary = PH.exportPlan.layerLabel(layerCfg) + " · " + emitLabels[layerCfg.emit] + (layerCfg.scope === "group" && layerCfg.resetOn ? " · إعادة البدء: " + (cfg.COLUMN_LABELS[layerCfg.resetOn] || layerCfg.resetOn) : "");
+        plan.layers.forEach(function(layerCfg) {
           var row = el("div", {
             class: "row",
             style: "justify-content:space-between; align-items:center; gap:var(--sp-2); padding:var(--sp-2); background:var(--paper-sunken); border-radius:var(--r-inner);"
           });
           row.appendChild(el("span", {
             class: "fs-body"
-          }, [ text(summary) ]));
+          }, [ text(PH.exportPlan.explain(layerCfg)) ]));
           var actions = el("div", {
             class: "row",
             style: "gap:4px;"
@@ -11528,7 +11138,7 @@ PH.app = function() {
           editBtn.addEventListener("click", function() {
             update(function() {
               draftLayer = layerCfg;
-              plan.totals.layers = plan.totals.layers.filter(function(l) {
+              plan.layers = plan.layers.filter(function(l) {
                 return l !== layerCfg;
               });
             }, "totals");
@@ -11540,7 +11150,7 @@ PH.app = function() {
           }, [ text("✕") ]);
           removeBtn.addEventListener("click", function() {
             update(function() {
-              plan.totals.layers = plan.totals.layers.filter(function(l) {
+              plan.layers = plan.layers.filter(function(l) {
                 return l !== layerCfg;
               });
             }, "totals");
@@ -11550,7 +11160,7 @@ PH.app = function() {
           row.appendChild(actions);
           columnsListSec.appendChild(row);
         });
-        if (plan.totals.layers.length >= 4) {
+        if (plan.layers.length >= 4) {
           columnsListSec.appendChild(el("div", {
             class: "fs-caption",
             style: "color:var(--brass);"
@@ -11559,10 +11169,10 @@ PH.app = function() {
         var editorBox = el("div", {
           style: "display:flex; flex-direction:column; gap:var(--sp-2); padding:var(--sp-2); border:1px dashed var(--line); border-radius:var(--r-inner);"
         });
-        editorBox.appendChild(totalsDiagram(diagramKindForScope(draftLayer.scope)));
-        editorBox.appendChild(fieldWrap("النطاق", segmented([ {
-          value: "row",
-          label: "لكل صف"
+        editorBox.appendChild(totalsDiagram(diagramKindForReset(draftLayer.reset)));
+        editorBox.appendChild(fieldWrap("إعادة الضبط", segmented([ {
+          value: "none",
+          label: "بلا (الورقة كاملة)"
         }, {
           value: "page",
           label: "لكل صفحة"
@@ -11572,23 +11182,27 @@ PH.app = function() {
         }, {
           value: "group",
           label: "لكل مجموعة"
-        }, {
-          value: "sheet",
-          label: "لكل الورقة"
-        } ], draftLayer.scope, function(v) {
-          draftLayer.scope = v;
+        } ], draftLayer.reset, function(v) {
+          draftLayer.reset = v;
+          if (v !== "group") draftLayer.resetOn = null;
         }, "totals")));
-        editorBox.appendChild(fieldWrap("النوع", segmented([ {
-          value: "cumulative",
-          label: "تراكمي"
+        editorBox.appendChild(fieldWrap("المدى", segmented([ {
+          value: false,
+          label: "لكل وحدة على حدة"
         }, {
-          value: "closing",
-          label: "ختامي"
+          value: true,
+          label: "تراكمي منذ البداية"
+        } ], draftLayer.running, function(v) {
+          draftLayer.running = v;
+        }, "totals")));
+        editorBox.appendChild(fieldWrap("القيمة تظهر", segmented([ {
+          value: false,
+          label: "عند نهاية الوحدة فقط"
         }, {
-          value: "carry",
-          label: "منقول"
-        } ], draftLayer.mode, function(v) {
-          draftLayer.mode = v;
+          value: true,
+          label: "في كل صف"
+        } ], draftLayer.every, function(v) {
+          draftLayer.every = v;
         }, "totals")));
         editorBox.appendChild(fieldWrap("الإخراج", segmented([ {
           value: "column",
@@ -11599,8 +11213,8 @@ PH.app = function() {
         }, {
           value: "both",
           label: "كلاهما"
-        } ], draftLayer.emit, function(v) {
-          draftLayer.emit = v;
+        } ], draftLayer.place, function(v) {
+          draftLayer.place = v;
         }, "totals")));
         editorBox.appendChild(selectField("العمود", numericColumnsForPlan().map(function(f) {
           return {
@@ -11610,7 +11224,7 @@ PH.app = function() {
         }), draftLayer.field || defaultFieldForPlan() || "", function(v) {
           draftLayer.field = v || null;
         }, "totals"));
-        if (draftLayer.scope === "group") {
+        if (draftLayer.reset === "group") {
           editorBox.appendChild(selectField("إعادة البدء عند تغيّر", [ {
             value: "",
             label: "اختر عمودًا"
@@ -11623,7 +11237,7 @@ PH.app = function() {
             draftLayer.resetOn = v || null;
           }, "totals"));
         }
-        if (draftLayer.scope === "page") {
+        if (draftLayer.reset === "page") {
           var rppCaption;
           if (plan.reports.length === 1) {
             var repSettings = resolveSettings(plan.reports[0]);
@@ -11645,6 +11259,20 @@ PH.app = function() {
           draftLayer.label = labelInput.value || null;
         });
         editorBox.appendChild(fieldWrap("عنوان مخصَّص", labelInput));
+        if (draftLayer.field) {
+          editorBox.appendChild(el("div", {
+            class: "fs-caption text-soft"
+          }, [ text(PH.exportPlan.explain({
+            id: "draft",
+            field: draftLayer.field,
+            reset: draftLayer.reset,
+            resetOn: draftLayer.resetOn,
+            running: draftLayer.running,
+            every: draftLayer.every,
+            place: draftLayer.place,
+            label: null
+          })) ]));
+        }
         var addBtn = el("button", {
           class: "btn btn--secondary",
           type: "button"
@@ -11652,33 +11280,35 @@ PH.app = function() {
         addBtn.addEventListener("click", function() {
           var candidate = draftLayer;
           if (!candidate.field) candidate.field = defaultFieldForPlan();
-          if (candidate.scope === "group" && !candidate.resetOn) {
+          if (candidate.reset === "group" && !candidate.resetOn) {
             showToast("اختر عمود إعادة البدء أولًا", false);
             return;
           }
-          var sig = PH.exportPlan.configSignature(candidate);
-          var isDup = plan.totals.layers.some(function(l) {
-            return PH.exportPlan.configSignature(l) === sig;
+          var sig = PH.exportPlan.layerSignature(candidate);
+          var isDup = plan.layers.some(function(l) {
+            return PH.exportPlan.layerSignature(l) === sig;
           });
           if (isDup) {
             showToast("هذا الإعداد مضاف بالفعل", false);
             return;
           }
+          if (!candidate.id) candidate.id = makeLayerId();
           update(function() {
-            plan.totals.layers.push(candidate);
-            draftLayer = {
-              scope: "block",
-              mode: "closing",
-              field: null,
-              emit: "column",
-              resetOn: null,
-              label: null
-            };
+            plan.layers.push(candidate);
+            draftLayer = freshDraftLayer();
           }, "totals");
         });
         editorBox.appendChild(addBtn);
         columnsListSec.appendChild(editorBox);
         totalsSec.appendChild(columnsListSec);
+        var planCheck = PH.exportPlan.validatePlan(exportContractPlan());
+        if (!planCheck.ok) {
+          var errBox = el("div", {
+            class: "fs-caption",
+            style: "color:var(--brass); padding-top:var(--sp-2);"
+          }, [ text("تعذّر بناء خطة صالحة: " + planCheck.errors.join("، ")) ]);
+          totalsSec.appendChild(errBox);
+        }
         var previewSec = el("div", {
           style: "display:flex; flex-direction:column; gap:var(--sp-2); padding-top:var(--sp-2);"
         });
@@ -11708,6 +11338,7 @@ PH.app = function() {
       body.scrollTop = scrollTop;
     }
     function buildBody() {
+      ensureGrandTotalValid();
       body.innerHTML = "";
       var includesPages = onlyPages();
       var picker = el("div", {
@@ -11799,7 +11430,8 @@ PH.app = function() {
       fadeRefresh(body);
       var n = sheetCountEstimate();
       footerSummary.textContent = plan.reports.length + " تقرير × حتى " + n + " ورقة";
-      exportBtn.disabled = !plan.reports.length || !onlyPages() && !plan.slices.length;
+      var planOk = PH.exportPlan.validatePlan(exportContractPlan()).ok;
+      exportBtn.disabled = !plan.reports.length || !onlyPages() && !plan.slices.length || !planOk;
     }
     function buildEntriesForExport() {
       var entries = [];
@@ -11863,9 +11495,10 @@ PH.app = function() {
         showToast("لا توجد بيانات في التحديد الحالي.", false);
         return;
       }
+      var contractPlan = exportContractPlan();
       var sheets;
       try {
-        sheets = PH.exportPlan.buildSheets(plan, {
+        sheets = PH.exportPlan.buildSheets(contractPlan, {
           sheets: built.entries
         });
       } catch (err) {
@@ -11893,7 +11526,7 @@ PH.app = function() {
         };
       });
       var reportLabelForFile = plan.reports.length === 1 ? reportById(plan.reports[0]).label : plan.reports.length + "-تقارير";
-      var descriptor = PH.exportPlan.descriptorForLayers(PH.exportPlan.normalizeTotals(plan.totals).layers);
+      var descriptor = PH.exportPlan.descriptorForLayers(plan.layers);
       var abortToken = {
         cancelled: false
       };
@@ -11906,6 +11539,7 @@ PH.app = function() {
         month: exportMonth,
         reportLabel: reportLabelForFile,
         descriptor,
+        plan: contractPlan,
         abortToken,
         onProgress: function(done, total, percent) {
           var pct = percent !== undefined ? percent : total ? done / total * 100 : 0;
