@@ -1536,20 +1536,6 @@ PH.config = function() {
     dispensedValue: true
   };
   var MAX_SAFE_SCALED = BigInt(Number.MAX_SAFE_INTEGER);
-  var BRASS_COLUMNS = {
-    value: true,
-    cumulative: true,
-    cumulative2: true,
-    sum1: true,
-    sum2: true,
-    group1: true,
-    group2: true,
-    priceAvg: true,
-    priceMin: true,
-    priceMax: true,
-    movingAvg: true,
-    valueOut: true
-  };
   var VIRTUAL_COLUMNS = {
     id: true,
     actions: true
@@ -1653,7 +1639,6 @@ PH.config = function() {
     COLUMN_LABELS,
     MONEY_COLUMNS,
     MAX_SAFE_SCALED,
-    BRASS_COLUMNS,
     VIRTUAL_COLUMNS,
     COLUMN_WEIGHTS,
     printableColumns,
@@ -3284,6 +3269,15 @@ PH.query = function() {
     }
     return d[al + 1][bl + 1];
   }
+  function tokenRank(queryToken, fieldToken) {
+    if (fieldToken === queryToken) return 0;
+    if (fieldToken.indexOf(queryToken) === 0) return 1;
+    if (fieldToken.indexOf(queryToken) !== -1) return 2;
+    var qLen = queryToken.length;
+    var maxDist = qLen >= 7 ? 2 : 1;
+    if (qLen >= 4 && Math.abs(fieldToken.length - qLen) <= maxDist && damerauLevenshtein(queryToken, fieldToken) <= maxDist) return 4;
+    return -1;
+  }
   function matchRank(normalizedQuery, normalizedField) {
     if (normalizedField === normalizedQuery) return 0;
     if (normalizedField.indexOf(normalizedQuery) === 0) return 1;
@@ -3300,6 +3294,22 @@ PH.query = function() {
         if (Math.abs(t.length - queryLen) > maxDist) continue;
         if (damerauLevenshtein(normalizedQuery, t) <= maxDist) return 4;
       }
+    }
+    var queryTokens = normalizedQuery.split(/\s+/).filter(function(t) {
+      return t.length > 0;
+    });
+    if (queryTokens.length > 1) {
+      var worst = 0;
+      for (var qi = 0; qi < queryTokens.length; qi++) {
+        var best = -1;
+        for (var fi = 0; fi < fieldTokens.length; fi++) {
+          var r = tokenRank(queryTokens[qi], fieldTokens[fi]);
+          if (r !== -1 && (best === -1 || r < best)) best = r;
+        }
+        if (best === -1) return -1;
+        if (best > worst) worst = best;
+      }
+      return 4 + worst;
     }
     return -1;
   }
@@ -3665,7 +3675,7 @@ PH.validate = function() {
         });
       }
     }
-    var dupKey = [ row.month, row.book, row.serial, row.name, row.unit, row.price, row.shift, row.dispense ].join("\0");
+    var dupKey = [ row.month, row.book, row.serial, row.name, row.unit, row.price, row.budget, row.shift, row.dispense ].join("\0");
     if (seenKeys[dupKey] !== undefined) {
       problems.push({
         code: "DUPLICATE_ROW",
@@ -10278,14 +10288,14 @@ PH.app = function() {
         }
         return;
       }
-      if (ctrl && key === "z") {
+      if (ctrl && key === "z" && !e.shiftKey) {
         e.preventDefault();
         var l = store.undo();
         if (l) {
           render();
           showToast("تراجع: " + l);
         }
-      } else if (ctrl && key === "y") {
+      } else if (ctrl && (key === "y" || key === "z" && e.shiftKey)) {
         e.preventDefault();
         var l2 = store.redo();
         if (l2) {
