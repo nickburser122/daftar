@@ -1617,6 +1617,11 @@ PH.config = function() {
     if (fieldDef && (fieldDef.type === "number" || fieldDef.type === "integer")) return true;
     return !!COMPUTED_NUMERIC_COLUMNS[columnKey];
   }
+  function alignEnd(columnKey, value) {
+    if (MONEY_COLUMNS[columnKey]) return true;
+    if (typeof value === "number" || typeof value === "bigint") return true;
+    return false;
+  }
   return {
     SCALE_QTY,
     SCALE_PRICE,
@@ -1625,6 +1630,7 @@ PH.config = function() {
     COLUMN_DECIMALS,
     decimalsForColumn,
     isNumericColumn,
+    alignEnd,
     DIMENSIONS,
     DIMENSION_ORDER,
     DIMENSION_LABELS,
@@ -1646,7 +1652,6 @@ PH.config = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.util = function() {
   var arCollator = null;
@@ -1686,7 +1691,65 @@ PH.util = function() {
   };
 }();
 
-window.PH = window.PH || {};
+
+PH.cache = function() {
+  function cappedMap(limit) {
+    if (typeof Map === "undefined") return null;
+    var m = new Map;
+    return {
+      has: function(key) {
+        return m.has(key);
+      },
+      get: function(key) {
+        return m.get(key);
+      },
+      set: function(key, val) {
+        if (m.size >= limit) m.clear();
+        m.set(key, val);
+      },
+      clear: function() {
+        m.clear();
+      },
+      size: function() {
+        return m.size;
+      }
+    };
+  }
+  function cappedObject(limit) {
+    var obj = {};
+    var count = 0;
+    return {
+      has: function(key) {
+        return obj[key] !== undefined;
+      },
+      get: function(key) {
+        return obj[key];
+      },
+      set: function(key, val) {
+        if (count >= limit) {
+          obj = {};
+          count = 0;
+        }
+        obj[key] = val;
+        count++;
+      },
+      clear: function() {
+        obj = {};
+        count = 0;
+      },
+      size: function() {
+        return count;
+      }
+    };
+  }
+  function capped(limit, kind) {
+    return kind === "object" ? cappedObject(limit) : cappedMap(limit);
+  }
+  return {
+    capped
+  };
+}();
+
 
 PH.normalize = function() {
   var TASHKEEL = /[\u064B-\u0652\u0670]/g;
@@ -1711,8 +1774,7 @@ PH.normalize = function() {
     return str.replace(/\s+/g, " ").trim();
   }
   var NEEDS_NFD_CHECK = /[^\x00-\x7F\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
-  var arabicNormalizeCache = typeof Map !== "undefined" ? new Map : null;
-  var ARABIC_NORMALIZE_CACHE_LIMIT = 5e3;
+  var arabicNormalizeCache = PH.cache.capped(5e3, "map");
   function arabicNormalizeUncached(input) {
     if (input === null || input === undefined) return "";
     var str = String(input);
@@ -1736,7 +1798,6 @@ PH.normalize = function() {
     var cached = arabicNormalizeCache.get(key);
     if (cached !== undefined) return cached;
     var out = arabicNormalizeUncached(input);
-    if (arabicNormalizeCache.size >= ARABIC_NORMALIZE_CACHE_LIMIT) arabicNormalizeCache.clear();
     arabicNormalizeCache.set(key, out);
     return out;
   }
@@ -1854,7 +1915,6 @@ PH.normalize = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.dom = function() {
   function el(tag, attrs, children) {
@@ -1876,7 +1936,158 @@ PH.dom = function() {
   };
 }();
 
-window.PH = window.PH || {};
+
+PH.popover = function() {
+  function position(el, anchorEl, opts) {
+    opts = opts || {};
+    var margin = opts.margin;
+    var gap = opts.gap;
+    var fallbackWidth = opts.fallbackWidth || 0;
+    var align = opts.align || "start";
+    var rect = anchorEl.getBoundingClientRect();
+    var w = el.offsetWidth || fallbackWidth;
+    var h = el.offsetHeight || 0;
+    var left = align === "end" ? rect.right - w : rect.left;
+    if (left < margin) left = margin;
+    if (left + w > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - w);
+    var top = rect.bottom + gap;
+    if (top + h > window.innerHeight - margin) top = Math.max(margin, rect.top - h - gap);
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+  }
+  function attach(el, anchorEl, opts) {
+    opts = opts || {};
+    var onClose = opts.onClose || function() {};
+    var closeOnEscape = opts.closeOnEscape !== false;
+    var closeOnClickAway = opts.closeOnClickAway !== false;
+    var repositionOnResize = opts.repositionOnResize !== false;
+    var repositionOnScroll = opts.repositionOnScroll !== false;
+    var returnFocus = opts.returnFocus !== false;
+    var delayAll = !!opts.delayAll;
+    var posOpts = opts.position || {};
+    var anchorHit = opts.anchorHit || function(a, t) {
+      return a.contains(t);
+    };
+    function reposition() {
+      position(el, anchorEl, posOpts);
+    }
+    function onDocClick(e) {
+      if (el.contains(e.target) || anchorEl && anchorHit(anchorEl, e.target)) return;
+      onClose();
+    }
+    function onDocKey(e) {
+      if (e.key === "Escape") {
+        onClose();
+        if (returnFocus && anchorEl && anchorEl.focus) anchorEl.focus();
+      }
+    }
+    var cancelled = false;
+    if (!delayAll) {
+      if (repositionOnResize) window.addEventListener("resize", reposition);
+      if (repositionOnScroll) window.addEventListener("scroll", reposition, true);
+      if (closeOnEscape) document.addEventListener("keydown", onDocKey);
+    }
+    setTimeout(function() {
+      if (cancelled) return;
+      if (closeOnClickAway) document.addEventListener("click", onDocClick);
+      if (delayAll) {
+        if (closeOnEscape) document.addEventListener("keydown", onDocKey);
+        if (repositionOnResize) window.addEventListener("resize", reposition);
+        if (repositionOnScroll) window.addEventListener("scroll", reposition, true);
+      }
+    }, 0);
+    function cleanup() {
+      cancelled = true;
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onDocKey);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    }
+    return {
+      close: onClose,
+      cleanup,
+      reposition
+    };
+  }
+  return {
+    position,
+    attach
+  };
+}();
+
+
+PH.ui = function() {
+  var el = PH.dom.el;
+  var text = PH.dom.text;
+  function field(labelText, controlEl) {
+    return el("div", {
+      class: "field"
+    }, [ el("label", {}, [ text(labelText) ]), controlEl ]);
+  }
+  function pillRow(items, current, onPick) {
+    var row = el("div", {
+      class: "row",
+      style: "gap:var(--sp-1); flex-wrap:wrap;"
+    });
+    items.forEach(function(item) {
+      var isObj = item && typeof item === "object";
+      var value = isObj ? item.value : item;
+      var label = isObj ? item.label : String(item);
+      var btn = el("button", {
+        class: "pill",
+        type: "button",
+        "aria-pressed": current === value ? "true" : "false"
+      }, [ text(label) ]);
+      btn.addEventListener("click", function() {
+        onPick(value);
+      });
+      row.appendChild(btn);
+    });
+    return row;
+  }
+  function switchRow(labelText, checked, onToggle) {
+    var sw = el("div", {
+      class: "switch",
+      role: "switch",
+      tabindex: "0",
+      "aria-checked": checked ? "true" : "false"
+    }, [ el("span", {
+      class: "switch__track"
+    }), el("span", {}, [ text(labelText) ]) ]);
+    sw.addEventListener("click", function() {
+      onToggle(!checked);
+    });
+    return sw;
+  }
+  function drawerSection(titleText) {
+    var sec = el("div", {
+      class: "drawer__section"
+    });
+    if (titleText) sec.appendChild(el("div", {
+      class: "fs-body",
+      style: "font-weight:600;"
+    }, [ text(titleText) ]));
+    return sec;
+  }
+  function section(title) {
+    var wrap = el("div", {
+      style: "display:flex; flex-direction:column; gap:var(--sp-2);"
+    });
+    wrap.appendChild(el("div", {
+      class: "fs-caption",
+      style: "font-weight:600; text-transform:uppercase; letter-spacing:.02em; color:var(--text-soft);"
+    }, [ text(title) ]));
+    return wrap;
+  }
+  return {
+    field,
+    pillRow,
+    switchRow,
+    drawerSection,
+    section
+  };
+}();
+
 
 PH.store = function() {
   var util = PH.util;
@@ -2391,11 +2602,9 @@ PH.store = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.settings = function() {
   var cfg = PH.config;
-  var store = PH.store;
   var CUMULATIVE_MODES = {
     none: true,
     block: true,
@@ -2456,6 +2665,13 @@ PH.settings = function() {
       return value;
     }
   }
+  function sanitizeGlobal(field, value) {
+    if (field === "rowsPerPage") return cfg.ROWS_PER_PAGE_PRESETS.indexOf(value) !== -1 ? value : cfg.ROWS_PER_PAGE_PRESETS[0];
+    if (field === "showPageMarkers") return typeof value === "boolean" ? value : true;
+    if (field === "printOrientation") return cfg.PRINT_ORIENTATIONS.indexOf(value) !== -1 ? value : cfg.PRINT_ORIENTATIONS[0];
+    if (field === "applyToPrintExport") return typeof value === "boolean" ? value : true;
+    return value;
+  }
   function resolve(reportId, overrides) {
     var base = cfg.REPORTS_BY_ID[reportId].defaults;
     var out = {};
@@ -2498,24 +2714,16 @@ PH.settings = function() {
     if (!rowsPerPage || rowsPerPage <= 0) return 0;
     return Math.max(1, Math.ceil(rowCount / rowsPerPage));
   }
-  function persistScope(scope, key, value) {
-    return store.saveSettings(scope, key, value);
-  }
-  function loadScope(scope) {
-    return store.loadSettings(scope);
-  }
   return {
     resolve,
     sanitize,
+    sanitizeGlobal,
     applyLinkedChange,
     isDivergent,
-    estimatedPageCount,
-    persistScope,
-    loadScope
+    estimatedPageCount
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.blocks = function() {
   var util = PH.util;
@@ -2648,7 +2856,6 @@ PH.blocks = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.format = function() {
   var cfg = PH.config;
@@ -2679,7 +2886,6 @@ PH.format = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.reports = function() {
   var cfg = PH.config;
@@ -3101,11 +3307,9 @@ PH.reports = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.matrix = function() {
   var cfg = PH.config;
-  var reports = PH.reports;
   function resolvePartition(dim, dimensionGroups) {
     var custom = dimensionGroups && dimensionGroups[dim];
     if (custom && custom.length) return custom;
@@ -3189,12 +3393,10 @@ PH.matrix = function() {
       return !m.empty;
     });
   }
-  var memoCache = new Map;
-  var MAX_CACHE_ENTRIES = 500;
+  var memoCache = PH.cache.capped(500, "map");
   function computeMemoized(signature, computeFn) {
     if (memoCache.has(signature)) return memoCache.get(signature);
     var result = computeFn();
-    if (memoCache.size >= MAX_CACHE_ENTRIES) memoCache.clear();
     memoCache.set(signature, result);
     return result;
   }
@@ -3215,7 +3417,6 @@ PH.matrix = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.query = function() {
   var norm = PH.normalize;
@@ -3497,7 +3698,6 @@ PH.query = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.validate = function() {
   var cfg = PH.config;
@@ -3776,7 +3976,6 @@ PH.validate = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.importer = function() {
   var cfg = PH.config;
@@ -3991,7 +4190,6 @@ PH.importer = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.average = function() {
   var cfg = PH.config;
@@ -3999,7 +4197,7 @@ PH.average = function() {
   var blk = PH.blocks;
   var util = PH.util;
   var isBlank = util.isBlank;
-  var PS = 10000n;
+  var PS = BigInt(cfg.SCALE_PRICE);
   function emptyPriceAcc() {
     return {
       wq: 0n,
@@ -4197,7 +4395,7 @@ PH.average = function() {
         unit: row.unit,
         received_s: BigInt(Math.round((row.received || 0) * cfg.SCALE_QTY)),
         dispensed_s: BigInt(Math.round((row.dispensed || 0) * cfg.SCALE_QTY)),
-        price_s: BigInt(Math.round((row.price || 0) * Number(PS)))
+        price_s: BigInt(Math.round((row.price || 0) * cfg.SCALE_PRICE))
       };
     });
     var itemGroups = reports.groupRows(events, [ "name", "unit" ]);
@@ -4245,7 +4443,6 @@ PH.average = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.paginate = function() {
   var PAGE_HEIGHT_PORTRAIT_MM = 297;
@@ -4380,7 +4577,6 @@ PH.paginate = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.viewTable = function() {
   var cfg = PH.config;
@@ -4395,10 +4591,6 @@ PH.viewTable = function() {
   var BUFFER_ROWS = 12;
   function formatCell(value, columnKey) {
     return PH.format.cell(value, columnKey);
-  }
-  function formatMoneyBigInt(value, decimals) {
-    if (value === null || value === undefined) return "";
-    return PH.blocks.formatScaled(value, decimals, true);
   }
   function createTable(container, opts) {
     var state = {
@@ -4457,7 +4649,6 @@ PH.viewTable = function() {
     addColgroup(headerTable);
     addColgroup(bodyTable);
     var thead = el("thead");
-    function isNumericColumn(col) { return cfg.isNumericColumn(col); }
     function renderHeader() {
       thead.innerHTML = "";
       var headerRow = el("tr");
@@ -4478,7 +4669,7 @@ PH.viewTable = function() {
           scope: "col",
           tabindex: "0",
           role: "columnheader",
-          style: "position:relative; cursor:pointer;" + (isNumericColumn(col) ? " text-align:end;" : "")
+          style: "position:relative; cursor:pointer;" + (cfg.isNumericColumn(col) ? " text-align:end;" : "")
         }, [ text((cfg.COLUMN_LABELS[col] || col) + arrow + (order ? " " + order : "")) ]);
         th.setAttribute("aria-sort", sortLevel ? sortLevel.direction === "asc" ? "ascending" : "descending" : "none");
         var headerFilter = opts.queryState && opts.queryState.filters ? opts.queryState.filters.filter(function(filter) {
@@ -4530,19 +4721,6 @@ PH.viewTable = function() {
     }
     renderHeader();
     headerTable.appendChild(thead);
-    function positionEscapedMenu(menu, anchorEl, align) {
-      var rect = anchorEl.getBoundingClientRect();
-      var margin = 6;
-      var w = menu.offsetWidth || 220;
-      var h = menu.offsetHeight || 0;
-      var left = align === "end" ? rect.right - w : rect.left;
-      if (left < margin) left = margin;
-      if (left + w > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - w);
-      var top = rect.bottom + 4;
-      if (top + h > window.innerHeight - margin) top = Math.max(margin, rect.top - h - 4);
-      menu.style.left = left + "px";
-      menu.style.top = top + "px";
-    }
     function toggleFilterMenu(column, anchorEl) {
       closeFillMenu();
       closeFilterMenu();
@@ -4641,26 +4819,26 @@ PH.viewTable = function() {
         menu.appendChild(item);
       });
       document.body.appendChild(menu);
-      positionEscapedMenu(menu, anchorEl, "start");
-      state.activeFilterMenu = menu;
-      function onClickAway(e) {
-        if (!menu.contains(e.target) && e.target !== anchorEl) closeFilterMenu();
-      }
-      function onReposition() {
-        positionEscapedMenu(menu, anchorEl, "start");
-      }
-      var cancelled = false;
-      setTimeout(function() {
-        if (!cancelled) document.addEventListener("click", onClickAway);
-      }, 0);
-      window.addEventListener("resize", onReposition);
-      window.addEventListener("scroll", onReposition, true);
-      menu.__cleanup = function() {
-        cancelled = true;
-        document.removeEventListener("click", onClickAway);
-        window.removeEventListener("resize", onReposition);
-        window.removeEventListener("scroll", onReposition, true);
+      var ESCAPED_MENU_POS = {
+        margin: 6,
+        gap: 4,
+        fallbackWidth: 220
       };
+      PH.popover.position(menu, anchorEl, Object.assign({
+        align: "start"
+      }, ESCAPED_MENU_POS));
+      state.activeFilterMenu = menu;
+      var popHandle = PH.popover.attach(menu, anchorEl, {
+        onClose: closeFilterMenu,
+        closeOnEscape: false,
+        anchorHit: function(a, t) {
+          return t === a;
+        },
+        position: Object.assign({
+          align: "start"
+        }, ESCAPED_MENU_POS)
+      });
+      menu.__cleanup = popHandle.cleanup;
     }
     function closeFilterMenu() {
       if (state.activeFilterMenu) {
@@ -4703,31 +4881,24 @@ PH.viewTable = function() {
         }, [ text("الكميات تتطلب تأكيدًا") ]));
       }
       document.body.appendChild(menu);
-      positionEscapedMenu(menu, anchorEl, "end");
-      state.activeFillMenu = menu;
-      function onKey(e) {
-        if (e.key === "Escape") closeFillMenu();
-      }
-      function onClickAway(e) {
-        if (!menu.contains(e.target) && e.target !== anchorEl) closeFillMenu();
-      }
-      function onReposition() {
-        positionEscapedMenu(menu, anchorEl, "end");
-      }
-      document.addEventListener("keydown", onKey);
-      var cancelled = false;
-      setTimeout(function() {
-        if (!cancelled) document.addEventListener("click", onClickAway);
-      }, 0);
-      window.addEventListener("resize", onReposition);
-      window.addEventListener("scroll", onReposition, true);
-      menu.__cleanup = function() {
-        cancelled = true;
-        document.removeEventListener("keydown", onKey);
-        document.removeEventListener("click", onClickAway);
-        window.removeEventListener("resize", onReposition);
-        window.removeEventListener("scroll", onReposition, true);
+      var FILL_MENU_POS = {
+        margin: 6,
+        gap: 4,
+        fallbackWidth: 220,
+        align: "end"
       };
+      PH.popover.position(menu, anchorEl, FILL_MENU_POS);
+      state.activeFillMenu = menu;
+      var popHandle = PH.popover.attach(menu, anchorEl, {
+        onClose: closeFillMenu,
+        closeOnEscape: true,
+        returnFocus: false,
+        anchorHit: function(a, t) {
+          return t === a;
+        },
+        position: FILL_MENU_POS
+      });
+      menu.__cleanup = popHandle.cleanup;
     }
     function closeFillMenu() {
       if (state.activeFillMenu) {
@@ -4838,7 +5009,7 @@ PH.viewTable = function() {
             tr.appendChild(td);
             return;
           }
-          if (cfg.MONEY_COLUMNS[col]) td.classList.add("cell-num", "money"); else if (typeof val === "number" || typeof val === "bigint") td.classList.add("cell-num");
+          if (cfg.MONEY_COLUMNS[col]) td.classList.add("cell-num", "money"); else if (cfg.alignEnd(col, val)) td.classList.add("cell-num");
           if (row.__filled && row.__filled[col]) {
             td.classList.add("cell--filled");
             td.title = "مملوء";
@@ -4848,7 +5019,7 @@ PH.viewTable = function() {
           }
           var display;
           if (typeof val === "bigint") {
-            display = formatMoneyBigInt(val, cfg.decimalsForColumn(col));
+            display = val === null || val === undefined ? "" : PH.blocks.formatScaled(val, cfg.decimalsForColumn(col), true);
           } else {
             display = formatCell(val, col);
           }
@@ -4916,18 +5087,15 @@ PH.viewTable = function() {
   }
   return {
     createTable,
-    formatCell,
-    formatMoneyBigInt
+    formatCell
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.viewEntry = function() {
   var cfg = PH.config;
   var norm = PH.normalize;
   var store = PH.store;
-  var validate = PH.validate;
   var reports = PH.reports;
   var el = PH.dom.el;
   var text = PH.dom.text;
@@ -5205,7 +5373,6 @@ PH.viewEntry = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.print = function() {
   var paginate = PH.paginate;
@@ -5240,24 +5407,17 @@ PH.print = function() {
     ctx.font = fontPx + "px " + (fontFamily || "IBM Plex Sans Arabic");
     return ctx.measureText(str).width;
   }
-  var measureCache = {};
-  var measureCacheSize = 0;
-  var MEASURE_CACHE_LIMIT = 5e3;
+  var measureCache = PH.cache.capped(5e3, "object");
   function cachedMeasure(ctx, str, columnWidth, fontPx) {
     var key = str + "|" + columnWidth + "|" + fontPx;
-    if (measureCache[key] !== undefined) return measureCache[key];
-    if (measureCacheSize >= MEASURE_CACHE_LIMIT) {
-      measureCache = {};
-      measureCacheSize = 0;
-    }
+    var hit = measureCache.get(key);
+    if (hit !== undefined) return hit;
     var w = measureTextWidth(ctx, str, fontPx);
-    measureCache[key] = w;
-    measureCacheSize++;
+    measureCache.set(key, w);
     return w;
   }
   function clearMeasureCache() {
-    measureCache = {};
-    measureCacheSize = 0;
+    measureCache.clear();
   }
   var printCanvas = null;
   function getPrintCtx() {
@@ -5360,7 +5520,7 @@ PH.print = function() {
       pageSequence++;
       printColumns.forEach(function(col) {
         var raw = col === "__sequence" ? pageSequence : slot.row ? slot.row[col] : "";
-        var isNum = cfg.MONEY_COLUMNS[col] || typeof raw === "number" || typeof raw === "bigint";
+        var isNum = cfg.alignEnd(col, raw);
         var display = PH.format.cell(raw, col);
         var cell = el("div", {
           class: "page-cell" + (isNum ? " page-cell--num" : "")
@@ -5595,7 +5755,6 @@ PH.print = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.exportPlan = function() {
   var blk = PH.blocks;
@@ -6032,7 +6191,6 @@ PH.exportPlan = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.exporter = function() {
   var cfg = PH.config;
@@ -6521,7 +6679,6 @@ PH.exporter = function() {
   };
 }();
 
-window.PH = window.PH || {};
 
 PH.selftest = function() {
   var blk = PH.blocks;
@@ -7750,7 +7907,132 @@ PH.selftest = function() {
   };
 }();
 
-window.PH = window.PH || {};
+
+PH.snapshot = function() {
+  var cfg = PH.config;
+  var reports = PH.reports;
+  var matrix = PH.matrix;
+  var average = PH.average;
+  var exportPlan = PH.exportPlan;
+  function ser(v) {
+    if (typeof v === "bigint") return v.toString() + "n";
+    if (v === null || v === undefined) return v;
+    if (typeof v === "object") return null;
+    return v;
+  }
+  function rowDigest(row) {
+    var keys = Object.keys(row).filter(function(k) {
+      return k.charAt(0) !== "_" && k !== "sourceIds" && k !== "__acc";
+    }).sort();
+    var o = {};
+    keys.forEach(function(k) {
+      o[k] = ser(row[k]);
+    });
+    return o;
+  }
+  function checksumRows(rows) {
+    var hash = 2166136261;
+    for (var i = 0; i < rows.length; i++) {
+      var s = JSON.stringify(rowDigest(rows[i]));
+      for (var j = 0; j < s.length; j++) {
+        hash ^= s.charCodeAt(j);
+        hash = Math.imul(hash, 16777619);
+      }
+      hash ^= 1;
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+  function sheetDigest(sheet) {
+    var rows = sheet.rows || [];
+    var gt = sheet.grandTotal;
+    return {
+      rowCount: rows.length,
+      grandTotal: ser(typeof gt === "bigint" ? gt : null),
+      excludedNullOrZero: sheet.excludedNullOrZero || 0,
+      head: rows.slice(0, 3).map(rowDigest),
+      tail: rows.slice(-3).map(rowDigest),
+      checksum: checksumRows(rows)
+    };
+  }
+  function run() {
+    var source = PH.selftest.generateFixtureSource(20260701, 500);
+    var movementSettingsList = [ {
+      tag: "block10",
+      blockSize: 10,
+      cumulativeMode: "block",
+      showPartialBlockTotal: true
+    }, {
+      tag: "running24",
+      blockSize: 24,
+      cumulativeMode: "running",
+      showPartialBlockTotal: true
+    }, {
+      tag: "none",
+      blockSize: 10,
+      cumulativeMode: "none",
+      showPartialBlockTotal: true
+    }, {
+      tag: "partialOff",
+      blockSize: 10,
+      cumulativeMode: "block",
+      showPartialBlockTotal: false
+    } ];
+    var out = {};
+    movementSettingsList.forEach(function(ms) {
+      out["movement_" + ms.tag] = sheetDigest(reports.computeMovement(source, ms));
+      out["yearlyInventory_" + ms.tag] = sheetDigest(reports.computeYearlyInventory(source, ms));
+    });
+    out.groups = sheetDigest(reports.computeGroups(source, {}));
+    out.balance = sheetDigest(reports.computeBalance(source, {}));
+    out.averagePrices = sheetDigest(average.computeAveragePrices(source, {}));
+    out.averagePrices_wmean = sheetDigest(average.computeAveragePrices(source, {
+      weightField: "dispensed",
+      zeroWeightPolicy: "exclude"
+    }));
+    out.movingAverage_w0 = sheetDigest(average.computeMovingAverage(source, {
+      windowSize: 0
+    }));
+    out.movingAverage_w3 = sheetDigest(average.computeMovingAverage(source, {
+      windowSize: 3
+    }));
+    var movementBlock10 = reports.computeMovement(source, movementSettingsList[0]);
+    if (exportPlan && exportPlan.computeLayerSeries) {
+      out.layerSeries_pageReset = ser(null);
+      try {
+        var s1 = exportPlan.computeLayerSeries(movementBlock10.rows, {
+          field: "value",
+          reset: "page",
+          running: false,
+          every: false
+        });
+        out.layerSeries_pageReset = Array.isArray(s1) ? s1.map(ser) : null;
+        var s2 = exportPlan.computeLayerSeries(movementBlock10.rows, {
+          field: "value",
+          reset: "none",
+          running: true,
+          every: true
+        });
+        out.layerSeries_runningEvery = Array.isArray(s2) ? s2.map(ser) : null;
+      } catch (e) {
+        out.layerSeriesError = String(e && e.message || e);
+      }
+    }
+    return {
+      seed: 20260701,
+      n: 500,
+      reports: out
+    };
+  }
+  return {
+    run
+  };
+}();
+
+PH.__snapshot = function() {
+  return JSON.stringify(PH.snapshot.run());
+};
+
 
 PH.app = function() {
   var cfg = PH.config;
@@ -7789,7 +8071,8 @@ PH.app = function() {
     sourceRowFilterVersion: 0,
     applyToPrintExport: true,
     hiddenColumns: {},
-    savedExportPlan: null
+    savedExportPlan: null,
+    settingsPanelAdvancedOpen: false
   };
   function setSourceRowFilterIds(ids) {
     state.sourceRowFilterIds = ids;
@@ -7913,7 +8196,7 @@ PH.app = function() {
       for (var k in fields) sanitized[k] = PH.settings.sanitize(scopeKey, k, fields[k]);
     } else if (scopeName === "global") {
       Object.keys(fields).forEach(function(k) {
-        if (k === "rowsPerPage") sanitized.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(fields.rowsPerPage) !== -1 ? fields.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0]; else if (k === "showPageMarkers") sanitized.showPageMarkers = typeof fields.showPageMarkers === "boolean" ? fields.showPageMarkers : true; else if (k === "printOrientation") sanitized.printOrientation = cfg.PRINT_ORIENTATIONS.indexOf(fields.printOrientation) !== -1 ? fields.printOrientation : cfg.PRINT_ORIENTATIONS[0]; else if (k === "applyToPrintExport") sanitized.applyToPrintExport = typeof fields.applyToPrintExport === "boolean" ? fields.applyToPrintExport : true; else sanitized[k] = fields[k];
+        sanitized[k] = PH.settings.sanitizeGlobal(k, fields[k]);
       });
     } else {
       sanitized = fields;
@@ -7971,27 +8254,10 @@ PH.app = function() {
     });
   }
   function fieldWrap(labelText, controlEl) {
-    return el("div", {
-      class: "field"
-    }, [ el("label", {}, [ text(labelText) ]), controlEl ]);
+    return PH.ui.field(labelText, controlEl);
   }
   function presetRow(presets, currentValue, onPick) {
-    var row = el("div", {
-      class: "row",
-      style: "gap:var(--sp-1); flex-wrap:wrap;"
-    });
-    presets.forEach(function(p) {
-      var btn = el("button", {
-        class: "pill",
-        type: "button",
-        "aria-pressed": currentValue === p ? "true" : "false"
-      }, [ text(String(p)) ]);
-      btn.addEventListener("click", function() {
-        onPick(p);
-      });
-      row.appendChild(btn);
-    });
-    return row;
+    return PH.ui.pillRow(presets, currentValue, onPick);
   }
   function checkPrintGeometry(rowsPerPage, orientation) {
     return PH.paginate.assertGeometry(Object.assign({}, PH.print.DEFAULT_GEO, {
@@ -8008,28 +8274,10 @@ PH.app = function() {
     return repDef.printTotalField;
   }
   function drawerSection(titleText) {
-    var sec = el("div", {
-      class: "drawer__section"
-    });
-    if (titleText) sec.appendChild(el("div", {
-      class: "fs-body",
-      style: "font-weight:600;"
-    }, [ text(titleText) ]));
-    return sec;
+    return PH.ui.drawerSection(titleText);
   }
   function switchRow(labelText, checked, onToggle) {
-    var sw = el("div", {
-      class: "switch",
-      role: "switch",
-      tabindex: "0",
-      "aria-checked": checked ? "true" : "false"
-    }, [ el("span", {
-      class: "switch__track"
-    }), el("span", {}, [ text(labelText) ]) ]);
-    sw.addEventListener("click", function() {
-      onToggle(!checked);
-    });
-    return sw;
+    return PH.ui.switchRow(labelText, checked, onToggle);
   }
   function openSettingsDrawer() {
     if (!store.getSourceRows().length) {
@@ -8474,7 +8722,12 @@ PH.app = function() {
     render();
     if (activeAnchoredPopover && activeAnchoredPopover.el === scopePopoverEl) {
       renderScopePopoverContent(scopePopoverEl);
-      positionPopoverNear(scopePopoverEl, activeAnchoredPopover.anchor, "end");
+      PH.popover.position(scopePopoverEl, activeAnchoredPopover.anchor, {
+        margin: 8,
+        gap: 8,
+        fallbackWidth: 280,
+        align: "end"
+      });
     }
   }
   function toggleChip(dim, group, isSelected) {
@@ -8705,17 +8958,12 @@ PH.app = function() {
     var toggle = $("btn-overflow-toggle");
     var menu = $("overflow-menu");
     if (!toggle || !menu) return;
-    var rect = toggle.getBoundingClientRect();
-    var margin = 8;
-    var menuWidth = menu.offsetWidth || 200;
-    var menuHeight = menu.offsetHeight || 0;
-    var left = rect.right - menuWidth;
-    if (left < margin) left = margin;
-    if (left + menuWidth > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - menuWidth);
-    var top = rect.bottom + margin;
-    if (top + menuHeight > window.innerHeight - margin) top = Math.max(margin, rect.top - menuHeight - margin);
-    menu.style.left = left + "px";
-    menu.style.top = top + "px";
+    PH.popover.position(menu, toggle, {
+      margin: 8,
+      gap: 8,
+      fallbackWidth: 200,
+      align: "end"
+    });
   }
   function bindOverflowMenu() {
     var toggle = $("btn-overflow-toggle");
@@ -8742,19 +8990,6 @@ PH.app = function() {
     if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
     if (p.anchor) p.anchor.setAttribute("aria-expanded", "false");
   }
-  function positionPopoverNear(pop, anchorEl, align) {
-    var rect = anchorEl.getBoundingClientRect();
-    var margin = 8;
-    var w = pop.offsetWidth || 280;
-    var h = pop.offsetHeight || 0;
-    var left = align === "start" ? rect.left : rect.right - w;
-    if (left < margin) left = margin;
-    if (left + w > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - w);
-    var top = rect.bottom + margin;
-    if (top + h > window.innerHeight - margin) top = Math.max(margin, rect.top - h - margin);
-    pop.style.left = left + "px";
-    pop.style.top = top + "px";
-  }
   function openAnchoredPopover(anchorEl, buildFn, opts) {
     opts = opts || {};
     closeAnchoredPopover();
@@ -8765,39 +9000,25 @@ PH.app = function() {
     });
     buildFn(pop);
     document.body.appendChild(pop);
-    positionPopoverNear(pop, anchorEl, opts.align);
+    var posOpts = {
+      margin: 8,
+      gap: 8,
+      fallbackWidth: 280,
+      align: opts.align === "start" ? "start" : "end"
+    };
+    PH.popover.position(pop, anchorEl, posOpts);
     anchorEl.setAttribute("aria-expanded", "true");
-    function onDocClick(e) {
-      if (pop.contains(e.target) || anchorEl.contains(e.target)) return;
-      closeAnchoredPopover();
-    }
-    function onDocKey(e) {
-      if (e.key === "Escape") {
-        closeAnchoredPopover();
-        if (opts.returnFocus !== false) anchorEl.focus();
-      }
-    }
-    function onReposition() {
-      positionPopoverNear(pop, anchorEl, opts.align);
-    }
-    var cancelled = false;
-    setTimeout(function() {
-      if (cancelled) return;
-      document.addEventListener("click", onDocClick);
-      document.addEventListener("keydown", onDocKey);
-      window.addEventListener("resize", onReposition);
-      window.addEventListener("scroll", onReposition, true);
-    }, 0);
+    var popHandle = PH.popover.attach(pop, anchorEl, {
+      onClose: closeAnchoredPopover,
+      closeOnEscape: true,
+      returnFocus: opts.returnFocus !== false,
+      delayAll: true,
+      position: posOpts
+    });
     activeAnchoredPopover = {
       el: pop,
       anchor: anchorEl,
-      cleanup: function() {
-        cancelled = true;
-        document.removeEventListener("click", onDocClick);
-        document.removeEventListener("keydown", onDocKey);
-        window.removeEventListener("resize", onReposition);
-        window.removeEventListener("scroll", onReposition, true);
-      }
+      cleanup: popHandle.cleanup
     };
     return pop;
   }
@@ -10006,16 +10227,8 @@ PH.app = function() {
           style: "margin-top:var(--sp-2); justify-content:space-between;"
         });
         row.appendChild(el("div", {}, [ text(cfg.COLUMN_LABELS[sugg.fieldKey] + " — " + sugg.ranges + " نطاق، " + sugg.blankCells + " خلية") ]));
-        var toggle = el("div", {
-          class: "switch",
-          role: "switch",
-          tabindex: "0",
-          "aria-checked": wiz.mergeDecisions[c] ? "true" : "false"
-        }, [ el("span", {
-          class: "switch__track"
-        }), el("span", {}, [ text("تعبئة") ]) ]);
-        toggle.addEventListener("click", function() {
-          wiz.mergeDecisions[c] = !wiz.mergeDecisions[c];
+        var toggle = PH.ui.switchRow("تعبئة", wiz.mergeDecisions[c], function(newChecked) {
+          wiz.mergeDecisions[c] = newChecked;
           applyMergeDecisions();
           renderAll();
         });
@@ -10971,34 +11184,14 @@ PH.app = function() {
       }
     }
     function section(title) {
-      var wrap = el("div", {
-        style: "display:flex; flex-direction:column; gap:var(--sp-2);"
-      });
-      wrap.appendChild(el("div", {
-        class: "fs-caption",
-        style: "font-weight:600; text-transform:uppercase; letter-spacing:.02em; color:var(--text-soft);"
-      }, [ text(title) ]));
-      return wrap;
+      return PH.ui.section(title);
     }
     function segmented(options, current, onPick, scope) {
-      var row = el("div", {
-        class: "row",
-        style: "gap:var(--sp-1); flex-wrap:wrap;"
+      return PH.ui.pillRow(options, current, function(value) {
+        update(function() {
+          onPick(value);
+        }, scope);
       });
-      options.forEach(function(opt) {
-        var btn = el("button", {
-          class: "pill",
-          type: "button",
-          "aria-pressed": current === opt.value ? "true" : "false"
-        }, [ text(opt.label) ]);
-        btn.addEventListener("click", function() {
-          update(function() {
-            onPick(opt.value);
-          }, scope);
-        });
-        row.appendChild(btn);
-      });
-      return row;
     }
     function selectField(labelText, options, current, onChange, scope) {
       var sel = el("select", {
@@ -11815,7 +12008,7 @@ PH.app = function() {
           var restored = payload.settingsOverrides || {};
           var sanitizedGlobal = {};
           if (restored.global && "rowsPerPage" in restored.global) {
-            sanitizedGlobal.rowsPerPage = cfg.ROWS_PER_PAGE_PRESETS.indexOf(restored.global.rowsPerPage) !== -1 ? restored.global.rowsPerPage : cfg.ROWS_PER_PAGE_PRESETS[0];
+            sanitizedGlobal.rowsPerPage = PH.settings.sanitizeGlobal("rowsPerPage", restored.global.rowsPerPage);
           }
           var sanitizedReport = {};
           Object.keys(restored.report || {}).forEach(function(rid) {
