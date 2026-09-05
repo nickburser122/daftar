@@ -894,6 +894,16 @@ table.grid { table-layout: fixed; }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+.panel-2.is-closing {
+  animation: panel-pop-out var(--motion-fast) forwards;
+  pointer-events: none;
+}
+
+@keyframes panel-pop-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.97) translateY(-2px); }
+}
+
 .dialog-refresh-fade { animation: dialog-refresh-fade var(--motion-fast); }
 
 @keyframes dialog-refresh-fade {
@@ -969,6 +979,23 @@ table.grid { table-layout: fixed; }
   inset: 0;
   background: var(--scrim);
   z-index: 90;
+}
+
+.dialog-overlay-fade { animation: dialog-overlay-in var(--motion-panel); }
+
+.dialog-overlay-fade.is-closing {
+  animation: dialog-overlay-out var(--motion-panel) forwards;
+  pointer-events: none;
+}
+
+@keyframes dialog-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dialog-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .drawer {
@@ -2038,9 +2065,24 @@ PH.popover = function() {
       reposition
     };
   }
+  function fadeOutAndRemove(el) {
+    if (!el || !el.parentNode) return;
+    el.classList.add("is-closing");
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      el.remove();
+    }
+    el.addEventListener("animationend", finish, {
+      once: true
+    });
+    setTimeout(finish, 300);
+  }
   return {
     position,
-    attach
+    attach,
+    fadeOutAndRemove
   };
 }();
 
@@ -2142,7 +2184,7 @@ PH.ui = function() {
       var s = openState;
       openState = null;
       s.cleanup();
-      s.menu.remove();
+      popover.fadeOutAndRemove(s.menu);
       document.removeEventListener("keydown", s.onMenuKey);
       trigger.setAttribute("aria-expanded", "false");
     }
@@ -2171,11 +2213,14 @@ PH.ui = function() {
           row.setAttribute("aria-selected", idx === highlightIndex ? "true" : "false");
         });
       }
-      options.forEach(function(opt) {
+      options.forEach(function(opt, idx) {
         var row = el("div", {
           role: "option",
           class: "command-palette__item"
         }, [ el("span", {}, [ text(opt.label) ]) ]);
+        row.addEventListener("mouseenter", function() {
+          setHighlight(idx);
+        });
         row.addEventListener("mousedown", function(e) {
           e.preventDefault();
           pick(opt.value);
@@ -5005,7 +5050,7 @@ PH.viewTable = function() {
     function closeFilterMenu() {
       if (state.activeFilterMenu) {
         if (state.activeFilterMenu.__cleanup) state.activeFilterMenu.__cleanup();
-        state.activeFilterMenu.remove();
+        PH.popover.fadeOutAndRemove(state.activeFilterMenu);
         state.activeFilterMenu = null;
       }
     }
@@ -5065,7 +5110,7 @@ PH.viewTable = function() {
     function closeFillMenu() {
       if (state.activeFillMenu) {
         if (state.activeFillMenu.__cleanup) state.activeFillMenu.__cleanup();
-        state.activeFillMenu.remove();
+        PH.popover.fadeOutAndRemove(state.activeFillMenu);
         state.activeFillMenu = null;
       }
     }
@@ -8266,6 +8311,7 @@ PH.app = function() {
   function registerDialog(overlay, opts) {
     opts = opts || {};
     var triggerEl = document.activeElement;
+    overlay.classList.add("dialog-overlay-fade");
     document.body.appendChild(overlay);
     document.body.classList.add("modal-open");
     dialogStack.push(overlay);
@@ -8288,7 +8334,7 @@ PH.app = function() {
       if (closed) return;
       closed = true;
       overlay.removeEventListener("keydown", onKeydown);
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      PH.popover.fadeOutAndRemove(overlay);
       var stackIdx = dialogStack.indexOf(overlay);
       if (stackIdx !== -1) dialogStack.splice(stackIdx, 1);
       if (!dialogStack.length) document.body.classList.remove("modal-open");
@@ -9149,7 +9195,7 @@ PH.app = function() {
     var p = activeAnchoredPopover;
     activeAnchoredPopover = null;
     if (p.cleanup) p.cleanup();
-    if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
+    PH.popover.fadeOutAndRemove(p.el);
     if (p.anchor) p.anchor.setAttribute("aria-expanded", "false");
   }
   function openAnchoredPopover(anchorEl, buildFn, opts) {
