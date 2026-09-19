@@ -62,7 +62,7 @@ try {
 
   --text: #1D1D1F;
   --text-soft: #6E6E73;
-  --text-faint: #A1A1A6;
+  --text-faint: #737377;
 
   --ink: #1F6F5C;
   --ink-hover: #185848;
@@ -1957,6 +1957,10 @@ PH.normalize = function() {
     }
     return str;
   }
+  function identityKey(input) {
+    if (input === null || input === undefined) return "";
+    return collapseWhitespace(String(input).normalize("NFC"));
+  }
   return {
     arabicNormalize,
     stripLeadingAl,
@@ -1967,7 +1971,8 @@ PH.normalize = function() {
     parseMonthValue,
     excelSerialToMonthString,
     digitsToAscii,
-    collapseWhitespace
+    collapseWhitespace,
+    identityKey
   };
 }();
 
@@ -1976,7 +1981,7 @@ PH.dom = function() {
   function el(tag, attrs, children) {
     var e = document.createElement(tag);
     if (attrs) Object.keys(attrs).forEach(function(k) {
-      if (k === "class") e.className = attrs[k]; else if (k === "html") e.innerHTML = attrs[k]; else if (k.indexOf("on") === 0 && typeof attrs[k] === "function") e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]);
+      if (k === "class") e.className = attrs[k]; else if (k.indexOf("on") === 0 && typeof attrs[k] === "function") e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]);
     });
     (children || []).forEach(function(c) {
       if (c) e.appendChild(c);
@@ -1986,9 +1991,15 @@ PH.dom = function() {
   function text(t) {
     return document.createTextNode(t === null || t === undefined ? "" : String(t));
   }
+  function trustedSvg(tag, attrs, svgMarkup) {
+    var e = el(tag, attrs, []);
+    e.innerHTML = svgMarkup;
+    return e;
+  }
   return {
     el,
-    text
+    text,
+    trustedSvg
   };
 }();
 
@@ -2166,11 +2177,10 @@ PH.ui = function() {
       class: "select__label"
     });
     trigger.appendChild(labelSpan);
-    trigger.appendChild(el("span", {
+    trigger.appendChild(PH.dom.trustedSvg("span", {
       class: "select__chevron",
-      "aria-hidden": "true",
-      html: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
-    }));
+      "aria-hidden": "true"
+    }, '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>'));
     function labelFor(value) {
       for (var i = 0; i < options.length; i++) if (options[i].value === value) return options[i].label;
       return opts.placeholder || "";
@@ -2309,11 +2319,23 @@ PH.store = function() {
   };
   var dbPromise = null;
   var dbUnavailable = false;
+  var dbUnavailableReason = null;
   function attemptOpenDb() {
     return new Promise(function(resolve) {
       if (typeof indexedDB === "undefined") {
-        resolve(null);
+        resolve({
+          db: null,
+          reason: "unsupported"
+        });
         return;
+      }
+      var settled = false;
+      var blockedTimer = null;
+      function settle(result) {
+        if (settled) return;
+        settled = true;
+        if (blockedTimer) clearTimeout(blockedTimer);
+        resolve(result);
       }
       var req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = function(e) {
@@ -2323,7 +2345,15 @@ PH.store = function() {
         });
       };
       req.onblocked = function() {
-        resolve(null);
+        notify({
+          type: "db-blocked"
+        });
+        blockedTimer = setTimeout(function() {
+          settle({
+            db: null,
+            reason: "blocked"
+          });
+        }, 8000);
       };
       req.onsuccess = function(e) {
         var db = e.target.result;
@@ -2331,26 +2361,51 @@ PH.store = function() {
           db.close();
           dbPromise = null;
         };
-        resolve(db);
+        settle({
+          db: db,
+          reason: null
+        });
       };
       req.onerror = function() {
-        resolve(null);
+        captureDbError(req.error, "database", "open");
+        settle({
+          db: null,
+          reason: "error"
+        });
       };
     });
   }
   function openDb() {
     if (dbPromise) return dbPromise;
-    dbPromise = attemptOpenDb().then(function(db) {
-      return db ? db : attemptOpenDb();
-    }).then(function(db) {
-      dbUnavailable = !db;
-      if (!db) dbPromise = null;
-      return db;
+    dbPromise = attemptOpenDb().then(function(result) {
+      if (result.db || result.reason === "blocked") return result;
+      return attemptOpenDb();
+    }).then(function(result) {
+      dbUnavailable = !result.db;
+      dbUnavailableReason = result.db ? null : result.reason;
+      if (!result.db) dbPromise = null;
+      return result.db;
     });
     return dbPromise;
   }
   function isDbUnavailable() {
     return dbUnavailable;
+  }
+  function getDbUnavailableReason() {
+    return dbUnavailableReason;
+  }
+  var lastDbError = null;
+  function captureDbError(err, storeName, op) {
+    lastDbError = {
+      code: err && err.name ? err.name : "UnknownError",
+      message: err && err.message ? err.message : "",
+      store: storeName,
+      op: op,
+      timestamp: Date.now()
+    };
+  }
+  function getLastDbError() {
+    return lastDbError;
   }
   function put(storeName, key, value) {
     return openDb().then(function(db) {
@@ -2362,6 +2417,7 @@ PH.store = function() {
           resolve(true);
         };
         tx.onerror = function() {
+          captureDbError(tx.error, storeName, "put");
           resolve(false);
         };
       });
@@ -2377,6 +2433,7 @@ PH.store = function() {
           resolve(req.result === undefined ? null : req.result);
         };
         req.onerror = function() {
+          captureDbError(req.error, storeName, "get");
           resolve(null);
         };
       });
@@ -2410,6 +2467,7 @@ PH.store = function() {
           }
         }
         tx.onerror = function() {
+          captureDbError(tx.error, storeName, "getAll");
           resolve([]);
         };
       });
@@ -2425,6 +2483,7 @@ PH.store = function() {
           resolve(true);
         };
         tx.onerror = function() {
+          captureDbError(tx.error, storeName, "remove");
           resolve(false);
         };
       });
@@ -2808,6 +2867,8 @@ PH.store = function() {
     getSaveState,
     flushAutosave,
     isDbUnavailable,
+    getDbUnavailableReason,
+    getLastDbError,
     getRowsVersion,
     loadPersisted,
     saveSettings,
@@ -3184,7 +3245,7 @@ PH.reports = function() {
       var row = rows[i];
       var parts = [];
       for (var k = 0; k < keyFields.length; k++) {
-        parts.push(norm.arabicNormalize(row[keyFields[k]]));
+        parts.push(norm.identityKey(row[keyFields[k]]));
       }
       var key = parts.join("\0");
       if (!map.has(key)) {
@@ -3432,25 +3493,32 @@ PH.reports = function() {
   }
   function computePagesForCombination(sourceRowsForCombination, combination, movementSettings) {
     var movement = computeMovement(sourceRowsForCombination, movementSettings);
-    var closing = movement.rows.filter(function(r) {
-      return r.cumulative !== null;
-    });
-    var isRunning = movementSettings.cumulativeMode === "running";
-    var prevRunning = 0n;
-    var pages = closing.map(function(r, idx) {
-      var pageValue = r.cumulative;
-      if (isRunning) {
-        pageValue = r.cumulative - prevRunning;
-        prevRunning = r.cumulative;
-      }
+    if (movement.rows.length === 0) {
       return {
-        printPageNo: idx + 1,
-        value: pageValue,
+        rows: [],
+        pageCount: 0,
+        movementGrandTotal: movement.grandTotal
+      };
+    }
+    var pagesResult = PH.paginate.buildPagesFromBlocked(movement.rows, movementSettings.rowsPerPage);
+    PH.paginate.annotatePageTotals(pagesResult, "value", {});
+    var pages = pagesResult.pages.map(function(page) {
+      var ids = [];
+      var fromFilled = false;
+      page.rows.forEach(function(slot) {
+        if (slot.row) {
+          if (slot.row.sourceIds) ids.push.apply(ids, slot.row.sourceIds);
+          if (slot.row.__fromFilled) fromFilled = true;
+        }
+      });
+      return {
+        printPageNo: page.pageNumber,
+        value: page.pageTotal,
         budget: dimLabel(combination, "budget"),
         shift: dimLabel(combination, "shift"),
         dispense: dimLabel(combination, "dispense"),
-        sourceIds: r.sourceIds || [],
-        __fromFilled: !!r.__fromFilled
+        sourceIds: ids,
+        __fromFilled: fromFilled
       };
     });
     return {
@@ -4229,6 +4297,7 @@ PH.importer = function() {
   var cfg = PH.config;
   var norm = PH.normalize;
   var reports = PH.reports;
+  var MAX_CELL_TEXT = 32 * 1024;
   var QUANTITY_FIELDS = {
     dispensed: true,
     received: true,
@@ -4368,6 +4437,7 @@ PH.importer = function() {
       for (var m = 0; m < mappedColumns.length; m++) {
         var fieldKey = mappedColumns[m].fieldKey;
         var rawVal = cells[mappedColumns[m].colIndex];
+        if (typeof rawVal === "string" && rawVal.length > MAX_CELL_TEXT) rawVal = rawVal.slice(0, MAX_CELL_TEXT);
         row.__raw[fieldKey] = rawVal;
         row[fieldKey] = coerceField(fieldKey, rawVal);
       }
@@ -6188,7 +6258,7 @@ PH.exportPlan = function() {
           continue;
         }
         var raw = rows[i3][resetOn];
-        var normVal = PH.normalize.arabicNormalize(raw === null || raw === undefined ? "" : String(raw));
+        var normVal = PH.normalize.identityKey(raw === null || raw === undefined ? "" : String(raw));
         if (hasPrev && normVal !== prevNorm) unitIdx++;
         out[i3] = unitIdx;
         prevNorm = normVal;
@@ -7631,6 +7701,144 @@ PH.selftest = function() {
         check(result, false, "P0.3 filtered-totals regression threw: " + (e && e.message ? e.message : String(e)));
       }
     })();
+    (function() {
+      try {
+        var mismatchRows = [];
+        for (var i = 1; i <= 8; i++) {
+          mismatchRows.push({
+            book: "A",
+            serial: i,
+            name: "دواء",
+            unit: "علبة",
+            dispensed: 1,
+            price: 10
+          });
+        }
+        var mismatchSettings = {
+          blockSize: 50,
+          rowsPerPage: 4,
+          cumulativeMode: "block",
+          showPartialBlockTotal: true
+        };
+        var pagesOut = reports.computePagesForCombination(mismatchRows, {}, mismatchSettings);
+        check(result, pagesOut.pageCount === 2, "printed-pages report follows rowsPerPage, not blockSize, when they diverge (P0.7, got " + pagesOut.pageCount + ")");
+        var pageValueSum = pagesOut.rows.reduce(function(sum, r) {
+          return sum + r.value;
+        }, 0n);
+        check(result, pageValueSum === pagesOut.movementGrandTotal, "printed-pages totals reconcile with the movement grand total (P0.7)");
+      } catch (e) {
+        check(result, false, "P0.7 printed-pages regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var identityRows = [ {
+          name: "صيدلية",
+          unit: "علبة"
+        }, {
+          name: "صيدليه",
+          unit: "علبة"
+        } ];
+        var groups = reports.groupRows(identityRows, [ "name", "unit" ]);
+        check(result, groups.length === 2, "groupRows keeps financially distinct names separate instead of merging on lossy Arabic normalization (P0.8, got " + groups.length + " groups)");
+      } catch (e) {
+        check(result, false, "P0.8 grouping-identity regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        function expectThrow(payload, label) {
+          var threw = false;
+          try {
+            PH.app.validateBackupPayload(payload);
+          } catch (e) {
+            threw = true;
+          }
+          check(result, threw, "backup restore rejects " + label + " (P0.10)");
+        }
+        var okThrew = false;
+        try {
+          PH.app.validateBackupPayload({
+            format: "daftar-workspace",
+            version: 1,
+            rows: [ {
+              id: "a"
+            } ]
+          });
+        } catch (e) {
+          okThrew = true;
+        }
+        check(result, !okThrew, "backup restore accepts a well-formed v1 payload (P0.10)");
+        expectThrow({
+          format: "something-else",
+          version: 1,
+          rows: []
+        }, "an unknown backup format");
+        expectThrow({
+          format: "daftar-workspace",
+          version: 2,
+          rows: []
+        }, "an unsupported backup version");
+        expectThrow({
+          format: "daftar-workspace",
+          version: 1,
+          rows: "not-an-array"
+        }, "a non-array rows payload");
+        expectThrow({
+          format: "daftar-workspace",
+          version: 1,
+          rows: [ {
+            id: "a"
+          }, [ "not", "an", "object" ] ]
+        }, "a malformed row entry");
+        var tooManyRows = new Array(100001).fill(0).map(function() {
+          return {};
+        });
+        expectThrow({
+          format: "daftar-workspace",
+          version: 1,
+          rows: tooManyRows
+        }, "a backup exceeding the row limit");
+      } catch (e) {
+        check(result, false, "P0.10 backup-restore regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var e1 = PH.dom.el("div", {
+          html: "<b>injected</b>"
+        });
+        check(result, e1.innerHTML !== "<b>injected</b>", "el() no longer treats an 'html' attrs key as innerHTML (P1.7)");
+        var e2 = PH.dom.trustedSvg("span", {
+          class: "x"
+        }, "<svg></svg>");
+        check(result, e2.innerHTML.indexOf("<svg") !== -1 && e2.className === "x", "trustedSvg renders markup through an explicit, dedicated API (P1.7)");
+      } catch (e) {
+        check(result, false, "P1.7 dom-helper regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        check(result, typeof store.getLastDbError === "function" && typeof store.getDbUnavailableReason === "function", "store exposes persistence-diagnostic getters (P1.4/P1.5)");
+        check(result, store.getLastDbError() === null, "no persistence error is reported when nothing has failed (P1.4)");
+      } catch (e) {
+        check(result, false, "P1.4/P1.5 diagnostics regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var bigText = new Array(40000).fill("A").join("");
+        var aoa = [ [ "name" ], [ bigText ] ];
+        var ws = XLSX.utils.aoa_to_sheet(aoa);
+        var extracted = PH.importer.extractRows(ws, 0, {
+          0: "name"
+        });
+        check(result, extracted.length === 1, "extractRows produces one row for the oversized-cell fixture (P1.6)");
+        check(result, extracted[0].name.length <= 32 * 1024, "extractRows truncates oversized cell text instead of keeping it unbounded (P1.6, got " + extracted[0].name.length + ")");
+      } catch (e) {
+        check(result, false, "P1.6 cell-size regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
     return result;
   }
   function runColumnChooserInvariants() {
@@ -8472,12 +8680,19 @@ PH.app = function() {
       return e.offsetParent !== null;
     });
   }
+  function setAppShellInert(inert) {
+    var shell = document.querySelector(".app-shell");
+    if (!shell) return;
+    shell.inert = inert;
+    if (inert) shell.setAttribute("aria-hidden", "true"); else shell.removeAttribute("aria-hidden");
+  }
   function registerDialog(overlay, opts) {
     opts = opts || {};
     var triggerEl = document.activeElement;
     overlay.classList.add("dialog-overlay-fade");
     document.body.appendChild(overlay);
     document.body.classList.add("modal-open");
+    setAppShellInert(true);
     dialogStack.push(overlay);
     function onKeydown(e) {
       if (e.key !== "Tab") return;
@@ -8501,7 +8716,10 @@ PH.app = function() {
       PH.popover.fadeOutAndRemove(overlay);
       var stackIdx = dialogStack.indexOf(overlay);
       if (stackIdx !== -1) dialogStack.splice(stackIdx, 1);
-      if (!dialogStack.length) document.body.classList.remove("modal-open");
+      if (!dialogStack.length) {
+        document.body.classList.remove("modal-open");
+        setAppShellInert(false);
+      }
       if (opts.onClose) opts.onClose();
       if (triggerEl && typeof triggerEl.focus === "function" && document.body.contains(triggerEl)) triggerEl.focus();
     };
@@ -8518,7 +8736,10 @@ PH.app = function() {
       var stackIdx = dialogStack.indexOf(dialog);
       if (stackIdx !== -1) dialogStack.splice(stackIdx, 1);
     }
-    if (!dialogStack.length) document.body.classList.remove("modal-open");
+    if (!dialogStack.length) {
+      document.body.classList.remove("modal-open");
+      setAppShellInert(false);
+    }
   }
   function confirmDialog(opts) {
     return new Promise(function (resolve) {
@@ -10222,6 +10443,11 @@ PH.app = function() {
     }
   }
   function handleFile(file) {
+    var MAX_IMPORT_BYTES = 25 * 1024 * 1024;
+    if (file && file.size > MAX_IMPORT_BYTES) {
+      showToast("حجم الملف أكبر من الحد المسموح للاستيراد (25 ميجابايت)", false);
+      return;
+    }
     var ext = importer.fileExtensionOf(file.name);
     var reader = new FileReader;
     reader.onload = function() {
@@ -10325,8 +10551,16 @@ PH.app = function() {
       applyMergeDecisions();
     }
     function applyMergeDecisions() {
+      var MAX_IMPORT_ROWS = 1e5;
       var ws = wiz.workbook.Sheets[wiz.sheetName];
       var rows = importer.extractRows(ws, wiz.headerRowIndex, wiz.mapping);
+      if (rows.length > MAX_IMPORT_ROWS) {
+        rows = rows.slice(0, MAX_IMPORT_ROWS);
+        if (!wiz.__rowLimitWarned) {
+          wiz.__rowLimitWarned = true;
+          showToast("الملف يحتوي على أكثر من " + MAX_IMPORT_ROWS + " صف — تم الاقتصار على أول " + MAX_IMPORT_ROWS + " صف", false);
+        }
+      }
       Object.keys(wiz.mergeDecisions).forEach(function(c) {
         if (!wiz.mergeDecisions[c]) return;
         var sugg = wiz.mergeSuggestions[c];
@@ -10800,7 +11034,8 @@ PH.app = function() {
       return;
     }
     banner.innerHTML = "";
-    var msg = store.isDbUnavailable() ? "التخزين المحلي غير متاح — البيانات لن تُحفظ عند إغلاق الصفحة. صدّر نسخة احتياطية قبل الإغلاق" : "تعذّر حفظ آخر التعديلات — صدّر نسخة احتياطية قبل إغلاق الصفحة";
+    var reason = store.getDbUnavailableReason();
+    var msg = reason === "blocked" ? "التخزين المحلي بانتظار إغلاق تبويب آخر لهذا التطبيق — أغلق التبويبات الأخرى ثم أعد تحميل الصفحة. صدّر نسخة احتياطية للاحتياط" : store.isDbUnavailable() ? "التخزين المحلي غير متاح — البيانات لن تُحفظ عند إغلاق الصفحة. صدّر نسخة احتياطية قبل الإغلاق" : "تعذّر حفظ آخر التعديلات — صدّر نسخة احتياطية قبل إغلاق الصفحة";
     banner.appendChild(text(msg));
     var exportBtn = el("button", {
       class: "btn btn--secondary"
@@ -12306,9 +12541,15 @@ PH.app = function() {
     var clears = sheetKeys.map(function(k) {
       return store.clearSettingsScope("sheet:" + k);
     });
-    return Promise.all(clears).then(function() {
+    return Promise.all(clears).then(function(results) {
+      var allCleared = results.every(function(ok) {
+        return ok !== false;
+      });
+      if (!allCleared) return false;
       return store.saveSettings("meta", "migratedSettings", 2);
-    }).catch(function() {});
+    }).catch(function() {
+      return false;
+    });
   }
   function openGuidedFormOverlay() {
     var overlay = el("div", {
@@ -12364,13 +12605,31 @@ PH.app = function() {
     PH.exporter.downloadBlob(blob, "daftar-workspace-backup.json");
     showToast("تم حفظ النسخة الاحتياطية");
   }
+  var MAX_BACKUP_BYTES = 50 * 1024 * 1024;
+  var MAX_BACKUP_ROWS = 1e5;
+  var SUPPORTED_BACKUP_VERSION = 1;
+  function validateBackupPayload(payload) {
+    if (!payload || payload.format !== "daftar-workspace") throw new Error("صيغة نسخة غير معروفة");
+    if (payload.version !== SUPPORTED_BACKUP_VERSION) throw new Error("إصدار نسخة احتياطية غير مدعوم: " + payload.version);
+    if (!Array.isArray(payload.rows)) throw new Error("صيغة نسخة غير معروفة");
+    if (payload.rows.length > MAX_BACKUP_ROWS) throw new Error("عدد الصفوف في النسخة الاحتياطية يتجاوز الحد المسموح (" + MAX_BACKUP_ROWS + ")");
+    var rowsWellFormed = payload.rows.every(function(r) {
+      return r && typeof r === "object" && !Array.isArray(r);
+    });
+    if (!rowsWellFormed) throw new Error("النسخة الاحتياطية تحتوي على صفوف بصيغة غير صحيحة");
+    return true;
+  }
   function restoreWorkspaceBackup(file) {
+    if (file && file.size > MAX_BACKUP_BYTES) {
+      showToast("ملف النسخة الاحتياطية أكبر من الحد المسموح (50 ميجابايت)", false);
+      return;
+    }
     var reader = new FileReader;
     reader.onload = function() {
       var payload;
       try {
         payload = JSON.parse(String(reader.result || ""));
-        if (!payload || payload.format !== "daftar-workspace" || !Array.isArray(payload.rows)) throw new Error("صيغة نسخة غير معروفة");
+        validateBackupPayload(payload);
       } catch (err) {
         showToast("تعذّرت استعادة النسخة: " + (err && err.message ? err.message : "ملف غير صالح"), false);
         return;
@@ -12473,6 +12732,7 @@ PH.app = function() {
     downloadTemplate,
     exportWorkspaceBackup,
     restoreWorkspaceBackup,
+    validateBackupPayload,
     handleFile,
     openExportDialog,
     openPrintPreview,
