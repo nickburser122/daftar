@@ -1519,7 +1519,7 @@ PH.config = function() {
     label: "متوسط التكلفة المتحرك",
     order: 8,
     shortcut: "8",
-    requiresOptional: [],
+    requiresOptional: [ "received", "month" ],
     defaults: {
       rowsPerPage: 24,
       blockSize: null,
@@ -2438,6 +2438,9 @@ PH.store = function() {
   var listeners = [];
   var saveState = "idle";
   var saveTimer = null;
+  var saveRevision = 0;
+  var persistedRevision = 0;
+  var saveChain = Promise.resolve(true);
   function notify(event) {
     listeners.forEach(function(fn) {
       fn(event);
@@ -2454,6 +2457,22 @@ PH.store = function() {
   function getSourceRows() {
     return currentSourceRows;
   }
+  function ensureUniqueRowIds(rows, prefix) {
+    var seen = {};
+    return (rows || []).map(function(row, index) {
+      var id = row && typeof row.id === "string" ? row.id : "";
+      if (id && !seen[id]) {
+        seen[id] = true;
+        return row;
+      }
+      var copy = Object.assign({}, row);
+      do {
+        copy.id = (prefix || "row-") + Date.now().toString(36) + "-" + index.toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+      } while (seen[copy.id]);
+      seen[copy.id] = true;
+      return copy;
+    });
+  }
   function setSourceRows(rows, actionLabel, skipUndo) {
     if (!skipUndo) {
       undoStack.push({
@@ -2466,12 +2485,7 @@ PH.store = function() {
       undoStack = [];
       redoStack = [];
     }
-    currentSourceRows = (rows || []).map(function(row, index) {
-      if (row && row.id) return row;
-      var copy = Object.assign({}, row);
-      copy.id = "row-" + Date.now().toString(36) + "-" + index.toString(36) + "-" + Math.random().toString(36).slice(2, 7);
-      return copy;
-    });
+    currentSourceRows = ensureUniqueRowIds(rows);
     rowsVersion++;
     notify({
       type: "rows-changed",
@@ -2518,7 +2532,25 @@ PH.store = function() {
     scheduleAutosave();
     return entry.label;
   }
+  function persistCurrentRevision() {
+    var revision = saveRevision;
+    var rowsToPersist = currentSourceRows;
+    saveChain = saveChain.then(function() {
+      return put(STORES.sourceRows, "current", rowsToPersist).then(function(ok) {
+        if (ok && revision > persistedRevision) persistedRevision = revision;
+        saveState = !ok ? "error" : persistedRevision === saveRevision ? "saved" : "pending";
+        notify({
+          type: "save-state",
+          state: saveState,
+          timestamp: Date.now()
+        });
+        return ok;
+      });
+    });
+    return saveChain;
+  }
   function scheduleAutosave() {
+    saveRevision++;
     saveState = "pending";
     notify({
       type: "save-state",
@@ -2527,29 +2559,16 @@ PH.store = function() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function() {
       saveTimer = null;
-      put(STORES.sourceRows, "current", currentSourceRows).then(function(ok) {
-        saveState = ok ? "saved" : "error";
-        notify({
-          type: "save-state",
-          state: saveState,
-          timestamp: Date.now()
-        });
-      });
+      persistCurrentRevision();
     }, 400);
   }
   function flushAutosave() {
-    if (!saveTimer) return Promise.resolve(true);
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    return put(STORES.sourceRows, "current", currentSourceRows).then(function(ok) {
-      saveState = ok ? "saved" : "error";
-      notify({
-        type: "save-state",
-        state: saveState,
-        timestamp: Date.now()
-      });
-      return ok;
-    });
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      return persistCurrentRevision();
+    }
+    return saveChain;
   }
   function getSaveState() {
     return saveState;
@@ -2569,12 +2588,7 @@ PH.store = function() {
       return get(STORES.sourceRows, "current");
     }).then(function(rows) {
       if (rows) {
-        currentSourceRows = rows.map(function(row, index) {
-          if (row && row.id) return row;
-          var copy = Object.assign({}, row);
-          copy.id = "row-restored-" + index.toString(36) + "-" + Math.random().toString(36).slice(2, 7);
-          return copy;
-        });
+        currentSourceRows = ensureUniqueRowIds(rows, "row-restored-");
         rowsVersion++;
       }
       return currentSourceRows;
@@ -3893,6 +3907,27 @@ PH.query = function() {
       totalCount: rows.length
     };
   }
+  function markScopeTotals(rows) {
+    return rows.map(function(row) {
+      if (!row || (!row.isGrandTotal && !row.isSubtotal)) return row;
+      var labelKey = Object.keys(row).filter(function(k) {
+        return typeof row[k] === "string" && row[k];
+      })[0];
+      if (!labelKey) return row;
+      var copy = Object.assign({}, row);
+      copy[labelKey] = row[labelKey] + " — نطاق كامل قبل التصفية";
+      return copy;
+    });
+  }
+  function visibleTotalFor(rows, field) {
+    if (!field) return null;
+    var total = 0n;
+    rows.forEach(function(r) {
+      if (!r || isMarkerRow(r)) return;
+      if (typeof r[field] === "bigint") total += r[field];
+    });
+    return total;
+  }
   return {
     damerauLevenshtein,
     matchRank,
@@ -3901,7 +3936,9 @@ PH.query = function() {
     compareValues,
     applySort,
     runPipeline,
-    isMarkerRow
+    isMarkerRow,
+    markScopeTotals,
+    visibleTotalFor
   };
 }();
 
@@ -4117,6 +4154,9 @@ PH.validate = function() {
     var blockerCount = problems.filter(function(p) {
       return p.severity === "blocker";
     }).length;
+    var errorCount = problems.filter(function(p) {
+      return p.severity === "error";
+    }).length;
     var errorRowIndexes = {};
     var warningRowIndexes = {};
     var problemRowIndexes = {};
@@ -4136,7 +4176,8 @@ PH.validate = function() {
     var validCount = totalRowCount - problemRowCount;
     return {
       problems,
-      canCommit: blockerCount === 0,
+      canCommit: blockerCount === 0 && errorCount === 0,
+      requiresExplicitOverride: blockerCount === 0 && errorCount > 0,
       summary: {
         validCount,
         problemRowCount,
@@ -4572,10 +4613,7 @@ PH.average = function() {
       }
       if (e.dispensed_s > 0n) {
         qty = qty - e.dispensed_s;
-        if (qty < 0n) {
-          flagged = true;
-          qty = 0n;
-        }
+        if (qty < 0n) flagged = true;
       }
       out.push({
         index: i,
@@ -6757,6 +6795,9 @@ PH.exporter = function() {
         if (v === null || v === undefined) return "";
         if (typeof v === "bigint") return PH.blocks.formatScaled(v, decimalsFor[c] !== undefined ? decimalsFor[c] : cfg.decimalsForColumn(c), false);
         var s = String(v);
+        if (typeof v === "string" && /^[\s\u0000-\u001F]*[=+\-@]/.test(s)) {
+          s = "'" + s;
+        }
         if (s.indexOf(sep) !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1) {
           s = '"' + s.replace(/"/g, '""') + '"';
         }
@@ -7467,6 +7508,129 @@ PH.selftest = function() {
         check(result, false, "row-delete regression test threw: " + (e && e.message ? e.message : String(e)));
       }
     }
+    (function() {
+      try {
+        var qScale = BigInt(cfg.SCALE_QTY);
+        var pScale = BigInt(cfg.SCALE_PRICE);
+        var negEvents = [ {
+          received_s: 3n * qScale,
+          dispensed_s: 0n,
+          price_s: 10n * pScale
+        }, {
+          received_s: 0n,
+          dispensed_s: 5n * qScale,
+          price_s: 10n * pScale
+        }, {
+          received_s: 10n * qScale,
+          dispensed_s: 0n,
+          price_s: 10n * pScale
+        } ];
+        var negCosting = avg.runMovingAverage(negEvents, 0);
+        check(result, negCosting[1].negativeStock === true, "negative-stock dip is flagged (P0.4)");
+        check(result, negCosting[2].qty === 8n * qScale, "negative-stock deficit carries into the next receipt instead of being erased (P0.4, qty=" + negCosting[2].qty + ")");
+      } catch (e) {
+        check(result, false, "P0.4 negative-stock regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var dupRows = [ {
+          id: "dup",
+          name: "a"
+        }, {
+          id: "dup",
+          name: "b"
+        }, {
+          name: "c"
+        } ];
+        store.setSourceRows(dupRows, "regression-test", true);
+        var ids = store.getSourceRows().map(function(r) {
+          return r.id;
+        });
+        var uniqueIds = ids.filter(function(v, i, a) {
+          return a.indexOf(v) === i;
+        });
+        check(result, uniqueIds.length === ids.length, "setSourceRows assigns unique ids to duplicate/missing ids (P0.5)");
+        store.setSourceRows([], "regression-test-cleanup", true);
+      } catch (e) {
+        check(result, false, "P0.5 duplicate-id regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var csv = PH.exporter.rowsToCsv([ {
+          name: '=HYPERLINK("http://x")',
+          qty: -5
+        } ], [ "name", "qty" ], ",", {}, {
+          qty: 0
+        });
+        var dataLine = csv.replace(/^\ufeff/, "").split("\r\n")[1];
+        check(result, dataLine.indexOf("'=HYPERLINK") !== -1, "CSV export neutralizes formula-leading text fields (P0.9)");
+        check(result, dataLine.indexOf(",-5") !== -1, "CSV export leaves validated numeric fields untouched (P0.9)");
+      } catch (e) {
+        check(result, false, "P0.9 CSV-injection regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var mapping = {
+          0: "budget",
+          1: "shift",
+          2: "dispense",
+          3: "book",
+          4: "serial",
+          5: "name",
+          6: "unit",
+          7: "price",
+          8: "dispensed",
+          9: "group",
+          10: "month",
+          11: "pharmacy"
+        };
+        var badRows = [ {
+          budget: "قوى عاملة",
+          shift: "صباحي",
+          dispense: "مجاني",
+          book: "A",
+          serial: "1",
+          name: "دواء أ",
+          unit: "علبة",
+          price: 10,
+          dispensed: -3
+        } ];
+        var out = PH.validate.validateDataset(badRows, mapping);
+        check(result, out.canCommit === false, "validateDataset blocks commit when a row has an error-severity problem (P0.2)");
+      } catch (e) {
+        check(result, false, "P0.2 import-validation regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
+    (function() {
+      try {
+        var scopeRows = [ {
+          group: "A",
+          value: 100n
+        }, {
+          group: "B",
+          value: 50n
+        }, {
+          group: "الإجمالي",
+          value: 150n,
+          isGrandTotal: true
+        } ];
+        var visibleRows = scopeRows.filter(function(r) {
+          return r.group === "A" || r.isGrandTotal;
+        });
+        var visible = PH.query.visibleTotalFor(visibleRows, "value");
+        check(result, visible === 100n, "visibleTotalFor sums only non-marker visible rows (P0.3, got " + visible + ")");
+        var marked = PH.query.markScopeTotals(visibleRows);
+        var grandRow = marked.filter(function(r) {
+          return r.isGrandTotal;
+        })[0];
+        check(result, grandRow.group !== "الإجمالي" && grandRow.group.indexOf("الإجمالي") === 0, "markScopeTotals relabels the grand-total row instead of leaving it identical to a filtered total (P0.3)");
+      } catch (e) {
+        check(result, false, "P0.3 filtered-totals regression threw: " + (e && e.message ? e.message : String(e)));
+      }
+    })();
     return result;
   }
   function runColumnChooserInvariants() {
@@ -8914,7 +9078,12 @@ PH.app = function() {
           }
         });
       } else {
-        var neededCol = cfg.COLUMN_LABELS[rep.requiresOptional[0]] || rep.requiresOptional[0];
+        var missingCols = rep.requiresOptional.filter(function(col) {
+          return !hasDataForColumn(col);
+        }).map(function(col) {
+          return cfg.COLUMN_LABELS[col] || col;
+        });
+        var neededCol = missingCols.join("، ");
         tab.title = "يحتاج عمود " + neededCol + " — انقر لمعرفة المزيد";
         tab.addEventListener("click", function() {
           showToast('تقرير "' + rep.label + '" يحتاج عمود "' + neededCol + '" في بياناتك. حمّل نموذج البيانات من الشاشة الفارغة لمعرفة الأعمدة المطلوبة.', false);
@@ -9942,6 +10111,8 @@ PH.app = function() {
   function renderAuditPanel(container) {
     var rows = store.getSourceRows();
     var sheet = computeActiveSheet();
+    var repDef = cfg.REPORTS_BY_ID[state.activeReportId];
+    var filtered = hasActiveFilterOrSearch();
     container.innerHTML = "";
     var dl = el("dl");
     dl.appendChild(el("dt", {}, [ text("صفوف المصدر") ]));
@@ -9950,10 +10121,22 @@ PH.app = function() {
     }, [ text(String(rows.length)) ]));
     var gtValue = grandTotalValueS(sheet.grandTotal);
     if (gtValue !== null) {
-      dl.appendChild(el("dt", {}, [ text("الإجمالي المحسوب") ]));
+      dl.appendChild(el("dt", {}, [ text(filtered ? "إجمالي النطاق قبل التصفية" : "الإجمالي المحسوب") ]));
       dl.appendChild(el("dd", {
         class: "num"
       }, [ text(PH.blocks.formatScaled(gtValue, cfg.decimalsForColumn("value"), true)) ]));
+    }
+    if (filtered && repDef && repDef.printTotalField) {
+      var visibleTotal = computeViewRows(sheet, repDef).visibleTotal;
+      if (visibleTotal !== null && visibleTotal !== undefined) {
+        dl.appendChild(el("dt", {
+          style: "color:var(--ink);"
+        }, [ text("إجمالي النتائج الظاهرة") ]));
+        dl.appendChild(el("dd", {
+          class: "num",
+          style: "color:var(--ink); font-weight:600;"
+        }, [ text(PH.blocks.formatScaled(visibleTotal, cfg.decimalsForColumn(repDef.printTotalField), true)) ]));
+      }
     }
     if (sheet.excludedNullOrZero !== undefined) {
       dl.appendChild(el("dt", {}, [ text("صفوف مستبعدة من الحركة") ]));
@@ -10238,6 +10421,7 @@ PH.app = function() {
           class: "btn btn--primary"
         }, [ text("استيراد " + wiz.rowsForCommit.length + " صف") ]);
         commitBtn.disabled = !wiz.validation.canCommit;
+        if (!wiz.validation.canCommit) commitBtn.title = "يجب إصلاح أو استبعاد كل الصفوف التي بها أخطاء قبل الاستيراد";
         commitBtn.addEventListener("click", function() {
           confirmDialog({
             message: store.getSourceRows().length ? "توجد بيانات حالية. هل تريد إضافة الصفوف المستوردة إليها أم استبدالها؟" : "استيراد " + wiz.rowsForCommit.length + " صف؟",
@@ -10767,6 +10951,10 @@ PH.app = function() {
         showPartialBlockTotal: settings.showPartialBlockTotal,
         valueField: repDef.printTotalField || "value"
       });
+    }
+    if (hasActiveFilterOrSearch()) {
+      pipeline.visibleTotal = query.visibleTotalFor(rows, repDef.printTotalField);
+      rows = query.markScopeTotals(rows);
     }
     pipeline.rows = rows;
     return pipeline;
