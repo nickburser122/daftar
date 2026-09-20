@@ -1265,6 +1265,8 @@ table.grid { table-layout: fixed; }
           </button>
           <button role="menuitem" id="btn-backup" title="حفظ نسخة كاملة من البيانات والإعدادات">نسخة احتياطية</button>
           <button role="menuitem" id="btn-restore" title="استعادة نسخة كاملة من البيانات والإعدادات">استعادة</button>
+          <button role="menuitem" id="btn-pharmacy-profile" title="اسم الصيدلية والشعار وبيانات الترخيص وترويسة الطباعة">بيانات الصيدلية</button>
+          <button role="menuitem" id="btn-saved-views" title="حفظ إعدادات التقرير الحالي أو الرجوع إلى عرض محفوظ">العروض المحفوظة</button>
           <button role="menuitem" id="btn-selftest" title="فحص ذاتي (Ctrl+Shift+T)">فحص ذاتي</button>
         </div>
       </div>
@@ -5766,7 +5768,7 @@ PH.print = function() {
     };
     return metrics;
   }
-  function buildPageElement(pageData, geo, columns, reportLabel, orientation, marginsMm, totalField) {
+  function buildPageElement(pageData, geo, columns, reportLabel, orientation, marginsMm, totalField, pharmacyProfile, userProfile) {
     var isLandscape = orientation === "landscape";
     var pageEl = el("div", {
       class: "page" + (isLandscape ? " print-landscape" : "")
@@ -5788,9 +5790,11 @@ PH.print = function() {
     grid.style.transformOrigin = "top center";
     grid.style.width = 100 / contentScale + "%";
     grid.style.height = 100 / contentScale + "%";
+    var pharmacyName = pharmacyProfile && pharmacyProfile.name ? pharmacyProfile.name : "";
+    var headerLabel = pharmacyName ? pharmacyName + " · " + reportLabel : reportLabel;
     var headerTop = el("div", {
       class: "page-header__top"
-    }, [ el("span", {}, [ text(reportLabel) ]), el("span", {}, [ text("صفحة " + pageData.pageNumber) ]) ]);
+    }, [ el("span", {}, [ text(headerLabel) ]), el("span", {}, [ text("صفحة " + pageData.pageNumber) ]) ]);
     var headerColumns = el("div", {
       class: "page-header__columns"
     });
@@ -5871,11 +5875,22 @@ PH.print = function() {
       class: "page-totals"
     }, [ text(totalsParts.join("   ·   ")) ]);
     grid.appendChild(totals);
+    var footerLeftText = (pageData.filteredMarker || "") + (pageData.filledMarker ? " " + pageData.filledMarker : "");
+    if (userProfile && userProfile.displayName) footerLeftText = (footerLeftText ? footerLeftText + " · " : "") + "أعدّه: " + userProfile.displayName;
+    var signatureRoles = pharmacyProfile && pharmacyProfile.signatureRoles && pharmacyProfile.signatureRoles.filter(function(r) {
+      return r;
+    }).length ? pharmacyProfile.signatureRoles.filter(function(r) {
+      return r;
+    }) : [ "الصيدلي", "المسؤول" ];
+    var signatureSpans = signatureRoles.map(function(role) {
+      return text(role + ": __________");
+    });
+    signatureSpans.push(text("التاريخ: __________"));
     var footer = el("div", {
       class: "page-footer"
-    }, [ el("span", {}, [ text((pageData.filteredMarker || "") + (pageData.filledMarker ? " " + pageData.filledMarker : "")) ]), el("span", {
+    }, [ el("span", {}, [ text(footerLeftText) ]), el("span", {
       class: "page-footer__signatures"
-    }, [ text("الصيدلي: __________"), text("المسؤول: __________"), text("التاريخ: __________") ]) ]);
+    }, signatureSpans) ]);
     grid.appendChild(footer);
     grid.appendChild(el("div", {}));
     pageEl.appendChild(grid);
@@ -5912,7 +5927,7 @@ PH.print = function() {
     });
     function realizePage(idx) {
       var pageData = pagesResult.pages[idx];
-      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo, totalField);
+      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, orientation, calibratedGeo, totalField, opts.pharmacyProfile, opts.userProfile);
       var wrapper = el("div", {
         class: "print-preview-page",
         "data-page-index": String(idx)
@@ -6009,7 +6024,7 @@ PH.print = function() {
       hasFilledMoney: opts.hasFilledMoney
     });
     pagesResult.pages.forEach(function(pageData) {
-      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, opts.orientation, calibratedGeo, totalField);
+      var pageEl = buildPageElement(pageData, geometry, opts.columns, opts.reportLabel, opts.orientation, calibratedGeo, totalField, opts.pharmacyProfile, opts.userProfile);
       printRoot.appendChild(pageEl);
     });
     var previousTitle = document.title;
@@ -7839,6 +7854,38 @@ PH.selftest = function() {
         check(result, false, "P1.6 cell-size regression threw: " + (e && e.message ? e.message : String(e)));
       }
     })();
+    (function() {
+      var app = PH.app;
+      var originalUser = app.getUserProfile();
+      var originalPharmacy = app.getPharmacyProfile();
+      var originalPresets = app.getSavedReportPresets();
+      try {
+        check(result, app.defaultUserProfile().displayName === "", "defaultUserProfile returns an empty display name");
+        check(result, Array.isArray(app.defaultPharmacyProfile().signatureRoles), "defaultPharmacyProfile returns an empty signatureRoles array");
+        app.saveUserProfile({
+          displayName: "test-user"
+        });
+        check(result, app.getUserProfile().displayName === "test-user", "saveUserProfile persists a display name into app state");
+        app.savePharmacyProfile({
+          name: "test-pharmacy",
+          signatureRoles: [ "a", "b" ]
+        });
+        var ph = app.getPharmacyProfile();
+        check(result, ph.name === "test-pharmacy" && ph.signatureRoles.length === 2, "savePharmacyProfile persists pharmacy fields into app state");
+        var preset = app.capturePresetFromCurrentView("test-preset");
+        check(result, preset && preset.name === "test-preset" && typeof preset.reportId === "string" && preset.reportSettings && typeof preset.reportSettings.rowsPerPage === "number", "capturePresetFromCurrentView captures report id, name and resolved settings");
+        app.saveReportPresets([ preset ]);
+        check(result, app.getSavedReportPresets().length === 1 && app.getSavedReportPresets()[0].name === "test-preset", "saveReportPresets stores presets in app state");
+      } catch (e) {
+        check(result, false, "profile/preset regression threw: " + (e && e.message ? e.message : String(e)));
+      } finally {
+        try {
+          app.saveUserProfile(originalUser || app.defaultUserProfile());
+          app.savePharmacyProfile(originalPharmacy || app.defaultPharmacyProfile());
+          app.saveReportPresets(originalPresets || []);
+        } catch (e2) {}
+      }
+    })();
     return result;
   }
   function runColumnChooserInvariants() {
@@ -8651,8 +8698,50 @@ PH.app = function() {
     applyToPrintExport: true,
     hiddenColumns: {},
     savedExportPlan: null,
-    settingsPanelAdvancedOpen: false
+    settingsPanelAdvancedOpen: false,
+    userProfile: defaultUserProfile(),
+    pharmacyProfile: defaultPharmacyProfile(),
+    savedReportPresets: []
   };
+  function defaultUserProfile() {
+    return {
+      displayName: ""
+    };
+  }
+  function defaultPharmacyProfile() {
+    return {
+      name: "",
+      code: "",
+      logo: null,
+      address: "",
+      license: "",
+      printNote: "",
+      signatureRoles: []
+    };
+  }
+  function saveUserProfile(fields) {
+    var merged = Object.assign(defaultUserProfile(), state.userProfile, fields);
+    state.userProfile = merged;
+    return store.saveSettings("meta", "userProfile", merged);
+  }
+  function savePharmacyProfile(fields) {
+    var merged = Object.assign(defaultPharmacyProfile(), state.pharmacyProfile, fields);
+    state.pharmacyProfile = merged;
+    return store.saveSettings("meta", "pharmacyProfile", merged);
+  }
+  function saveReportPresets(presets) {
+    state.savedReportPresets = presets;
+    return store.saveSettings("meta", "savedReportPresets", presets);
+  }
+  function getUserProfile() {
+    return state.userProfile;
+  }
+  function getPharmacyProfile() {
+    return state.pharmacyProfile;
+  }
+  function getSavedReportPresets() {
+    return state.savedReportPresets;
+  }
   function setSourceRowFilterIds(ids) {
     state.sourceRowFilterIds = ids;
     state.sourceRowFilterVersion++;
@@ -8871,6 +8960,414 @@ PH.app = function() {
   }
   function switchRow(labelText, checked, onToggle) {
     return PH.ui.switchRow(labelText, checked, onToggle);
+  }
+  function openPharmacyProfileDialog() {
+    var draft = Object.assign(defaultPharmacyProfile(), state.pharmacyProfile);
+    var userDraft = Object.assign(defaultUserProfile(), state.userProfile);
+    var overlay = el("div", {
+      class: "drawer-overlay",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": "بيانات الصيدلية"
+    });
+    var drawer = el("div", {
+      class: "drawer"
+    });
+    overlay.appendChild(drawer);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) removeDialog(overlay);
+    });
+    var header = el("div", {
+      class: "drawer__header"
+    }, [ el("div", {
+      class: "fs-title"
+    }, [ text("بيانات الصيدلية والمستخدم") ]) ]);
+    var closeBtn = el("button", {
+      class: "btn btn--ghost btn--icon",
+      type: "button",
+      "aria-label": "إغلاق"
+    }, [ text("✕") ]);
+    closeBtn.addEventListener("click", function() {
+      removeDialog(overlay);
+    });
+    header.appendChild(closeBtn);
+    drawer.appendChild(header);
+    var body = el("div", {
+      class: "drawer__body"
+    });
+    drawer.appendChild(body);
+    function persistPharmacy(fields) {
+      Object.assign(draft, fields);
+      savePharmacyProfile(fields);
+    }
+    function persistUser(fields) {
+      Object.assign(userDraft, fields);
+      saveUserProfile(fields);
+    }
+    var pharmSec = drawerSection("بيانات الصيدلية (تظهر في ترويسة الطباعة)");
+    var nameInput = el("input", {
+      class: "input",
+      type: "text",
+      placeholder: "اسم الصيدلية"
+    });
+    nameInput.value = draft.name || "";
+    nameInput.addEventListener("change", function() {
+      persistPharmacy({
+        name: nameInput.value.trim()
+      });
+    });
+    pharmSec.appendChild(fieldWrap("اسم الصيدلية", nameInput));
+    var codeInput = el("input", {
+      class: "input",
+      type: "text",
+      placeholder: "كود الصيدلية"
+    });
+    codeInput.value = draft.code || "";
+    codeInput.addEventListener("change", function() {
+      persistPharmacy({
+        code: codeInput.value.trim()
+      });
+    });
+    pharmSec.appendChild(fieldWrap("كود الصيدلية", codeInput));
+    var addressInput = el("input", {
+      class: "input",
+      type: "text",
+      placeholder: "العنوان"
+    });
+    addressInput.value = draft.address || "";
+    addressInput.addEventListener("change", function() {
+      persistPharmacy({
+        address: addressInput.value.trim()
+      });
+    });
+    pharmSec.appendChild(fieldWrap("العنوان", addressInput));
+    var licenseInput = el("input", {
+      class: "input",
+      type: "text",
+      placeholder: "رقم الترخيص"
+    });
+    licenseInput.value = draft.license || "";
+    licenseInput.addEventListener("change", function() {
+      persistPharmacy({
+        license: licenseInput.value.trim()
+      });
+    });
+    pharmSec.appendChild(fieldWrap("رقم الترخيص", licenseInput));
+    var noteInput = el("textarea", {
+      class: "input",
+      rows: "2",
+      placeholder: "ملاحظة تظهر أسفل ترويسة الطباعة (اختياري)"
+    });
+    noteInput.value = draft.printNote || "";
+    noteInput.addEventListener("change", function() {
+      persistPharmacy({
+        printNote: noteInput.value.trim()
+      });
+    });
+    pharmSec.appendChild(fieldWrap("ملاحظة الطباعة", noteInput));
+    var logoWrap = el("div", {
+      class: "row",
+      style: "gap:var(--sp-2); align-items:center; flex-wrap:wrap;"
+    });
+    var logoPreview = el("img", {
+      alt: "",
+      style: "height:40px; max-width:120px; object-fit:contain; border-radius:6px;" + (draft.logo ? "" : " display:none;")
+    });
+    if (draft.logo) logoPreview.src = draft.logo;
+    var logoInput = el("input", {
+      type: "file",
+      accept: "image/png,image/jpeg,image/svg+xml"
+    });
+    logoInput.addEventListener("change", function() {
+      var file = logoInput.files && logoInput.files[0];
+      if (!file) return;
+      if (file.size > 512 * 1024) {
+        showToast("حجم الشعار كبير جدًا (الحد 512 كيلوبايت)", false);
+        logoInput.value = "";
+        return;
+      }
+      var fr = new FileReader;
+      fr.onload = function() {
+        var dataUrl = String(fr.result || "");
+        persistPharmacy({
+          logo: dataUrl
+        });
+        logoPreview.src = dataUrl;
+        logoPreview.style.display = "";
+      };
+      fr.readAsDataURL(file);
+    });
+    var removeLogoBtn = el("button", {
+      class: "btn btn--ghost",
+      type: "button"
+    }, [ text("إزالة الشعار") ]);
+    removeLogoBtn.addEventListener("click", function() {
+      persistPharmacy({
+        logo: null
+      });
+      logoPreview.style.display = "none";
+      logoInput.value = "";
+    });
+    logoWrap.appendChild(logoInput);
+    logoWrap.appendChild(logoPreview);
+    logoWrap.appendChild(removeLogoBtn);
+    pharmSec.appendChild(fieldWrap("شعار الصيدلية", logoWrap));
+    body.appendChild(pharmSec);
+    var sigSec = drawerSection("توقيعات الطباعة");
+    var sigList = el("div", {
+      style: "display:flex; flex-direction:column; gap:var(--sp-1);"
+    });
+    function renderSigList() {
+      sigList.innerHTML = "";
+      (draft.signatureRoles || []).forEach(function(role, idx) {
+        var row = el("div", {
+          class: "row",
+          style: "gap:var(--sp-1); align-items:center;"
+        });
+        var roleInput = el("input", {
+          class: "input",
+          type: "text",
+          placeholder: "مسمى التوقيع"
+        });
+        roleInput.value = role;
+        roleInput.addEventListener("change", function() {
+          var next = draft.signatureRoles.slice();
+          next[idx] = roleInput.value.trim();
+          persistPharmacy({
+            signatureRoles: next
+          });
+        });
+        var delBtn = el("button", {
+          class: "btn btn--ghost btn--icon",
+          type: "button",
+          "aria-label": "حذف"
+        }, [ text("✕") ]);
+        delBtn.addEventListener("click", function() {
+          var next = draft.signatureRoles.slice();
+          next.splice(idx, 1);
+          persistPharmacy({
+            signatureRoles: next
+          });
+          renderSigList();
+        });
+        row.appendChild(roleInput);
+        row.appendChild(delBtn);
+        sigList.appendChild(row);
+      });
+    }
+    renderSigList();
+    sigSec.appendChild(sigList);
+    var addSigBtn = el("button", {
+      class: "btn btn--ghost",
+      type: "button"
+    }, [ text("+ إضافة توقيع") ]);
+    addSigBtn.addEventListener("click", function() {
+      if ((draft.signatureRoles || []).length >= 4) {
+        showToast("الحد الأقصى 4 توقيعات", false);
+        return;
+      }
+      var next = (draft.signatureRoles || []).concat([ "" ]);
+      persistPharmacy({
+        signatureRoles: next
+      });
+      renderSigList();
+    });
+    sigSec.appendChild(addSigBtn);
+    body.appendChild(sigSec);
+    var userSec = drawerSection("المستخدم");
+    var nameUserInput = el("input", {
+      class: "input",
+      type: "text",
+      placeholder: "الاسم"
+    });
+    nameUserInput.value = userDraft.displayName || "";
+    nameUserInput.addEventListener("change", function() {
+      persistUser({
+        displayName: nameUserInput.value.trim()
+      });
+    });
+    userSec.appendChild(fieldWrap("اسم المستخدم (يظهر في تذييل الطباعة)", nameUserInput));
+    body.appendChild(userSec);
+    registerDialog(overlay, {
+      initialFocus: nameInput
+    });
+  }
+  function capturePresetFromCurrentView(name) {
+    var reportId = state.activeReportId;
+    var settings = resolveSettings(reportId);
+    return {
+      id: "preset-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7),
+      name: name,
+      createdAt: new Date().toISOString(),
+      reportId: reportId,
+      combination: JSON.parse(JSON.stringify(state.activeCombination)),
+      activeMonth: state.activeMonth,
+      dimensionGroups: JSON.parse(JSON.stringify(state.dimensionGroups)),
+      hiddenColumns: (state.hiddenColumns[reportId] || []).slice(),
+      filters: JSON.parse(JSON.stringify(state.queryState.filters || [])),
+      sortLevels: JSON.parse(JSON.stringify(state.queryState.sortLevels || [])),
+      reportSettings: {
+        rowsPerPage: settings.rowsPerPage,
+        blockSize: settings.blockSize,
+        cumulativeMode: settings.cumulativeMode,
+        cumulativeAgg: settings.cumulativeAgg,
+        showPartialBlockTotal: settings.showPartialBlockTotal,
+        showPageMarkers: settings.showPageMarkers,
+        printOrientation: settings.printOrientation,
+        windowSize: settings.windowSize,
+        linked: settings.linked
+      }
+    };
+  }
+  function applyPreset(preset) {
+    var repDef = cfg.REPORTS_BY_ID[preset.reportId];
+    if (!repDef) {
+      showToast("هذا التقرير لم يعد متاحًا", false);
+      return;
+    }
+    state.activeReportId = preset.reportId;
+    state.activeCombination = preset.combination || matrix.allValuesCombination();
+    state.activeMonth = preset.activeMonth || null;
+    state.dimensionGroups = preset.dimensionGroups || {
+      budget: null,
+      shift: null,
+      dispense: null
+    };
+    state.hiddenColumns[preset.reportId] = (preset.hiddenColumns || []).slice();
+    store.saveSettings("meta", "hiddenColumns", state.hiddenColumns).catch(function() {});
+    state.queryState.filters = (preset.filters || []).slice();
+    state.queryState.sortLevels = (preset.sortLevels || []).slice();
+    state.queryState.searchText = "";
+    if (preset.reportSettings) {
+      var fields = Object.assign({}, preset.reportSettings);
+      delete fields.linked;
+      applySettingChange("report", preset.reportId, fields);
+      if (preset.reportSettings.linked === false) applyLinkedSettingChange(preset.reportId, false);
+    }
+    render();
+  }
+  function openSavedViewsDialog() {
+    var overlay = el("div", {
+      class: "drawer-overlay",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": "العروض المحفوظة"
+    });
+    var drawer = el("div", {
+      class: "drawer"
+    });
+    overlay.appendChild(drawer);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) removeDialog(overlay);
+    });
+    var header = el("div", {
+      class: "drawer__header"
+    }, [ el("div", {
+      class: "fs-title"
+    }, [ text("العروض المحفوظة") ]) ]);
+    var closeBtn = el("button", {
+      class: "btn btn--ghost btn--icon",
+      type: "button",
+      "aria-label": "إغلاق"
+    }, [ text("✕") ]);
+    closeBtn.addEventListener("click", function() {
+      removeDialog(overlay);
+    });
+    header.appendChild(closeBtn);
+    drawer.appendChild(header);
+    var body = el("div", {
+      class: "drawer__body"
+    });
+    drawer.appendChild(body);
+    function buildBody() {
+      body.innerHTML = "";
+      var saveSec = drawerSection("حفظ العرض الحالي");
+      var nameInput = el("input", {
+        class: "input",
+        type: "text",
+        placeholder: "اسم العرض"
+      });
+      var saveRow = el("div", {
+        class: "row",
+        style: "gap:var(--sp-1);"
+      });
+      var saveBtn = el("button", {
+        class: "btn btn--primary",
+        type: "button"
+      }, [ text("حفظ") ]);
+      saveBtn.addEventListener("click", function() {
+        var name = nameInput.value.trim();
+        if (!name) {
+          showToast("اكتب اسمًا للعرض أولًا", false);
+          return;
+        }
+        if (state.savedReportPresets.length >= 50) {
+          showToast("الحد الأقصى 50 عرضًا محفوظًا", false);
+          return;
+        }
+        var preset = capturePresetFromCurrentView(name);
+        var next = state.savedReportPresets.concat([ preset ]);
+        saveReportPresets(next);
+        nameInput.value = "";
+        buildBody();
+      });
+      saveRow.appendChild(nameInput);
+      saveRow.appendChild(saveBtn);
+      saveSec.appendChild(fieldWrap("اسم العرض الجديد", saveRow));
+      body.appendChild(saveSec);
+      var listSec = drawerSection("العروض المحفوظة (" + state.savedReportPresets.length + ")");
+      if (!state.savedReportPresets.length) {
+        listSec.appendChild(el("div", {
+          class: "fs-caption text-soft"
+        }, [ text("لا توجد عروض محفوظة بعد.") ]));
+      }
+      state.savedReportPresets.forEach(function(preset) {
+        var row = el("div", {
+          class: "row",
+          style: "gap:var(--sp-1); align-items:center; justify-content:space-between;"
+        });
+        var repDef = cfg.REPORTS_BY_ID[preset.reportId];
+        var infoCol = el("div", {
+          style: "display:flex; flex-direction:column;"
+        }, [ el("div", {
+          class: "fs-body"
+        }, [ text(preset.name) ]), el("div", {
+          class: "fs-caption text-soft"
+        }, [ text(repDef ? repDef.label : preset.reportId) ]) ]);
+        var btnRow = el("div", {
+          class: "row",
+          style: "gap:var(--sp-1);"
+        });
+        var applyBtn = el("button", {
+          class: "btn btn--ghost",
+          type: "button"
+        }, [ text("تطبيق") ]);
+        applyBtn.addEventListener("click", function() {
+          applyPreset(preset);
+          removeDialog(overlay);
+        });
+        var delBtn = el("button", {
+          class: "btn btn--ghost btn--icon",
+          type: "button",
+          "aria-label": "حذف"
+        }, [ text("✕") ]);
+        delBtn.addEventListener("click", function() {
+          var next = state.savedReportPresets.filter(function(p) {
+            return p.id !== preset.id;
+          });
+          saveReportPresets(next);
+          buildBody();
+        });
+        btnRow.appendChild(applyBtn);
+        btnRow.appendChild(delBtn);
+        row.appendChild(infoCol);
+        row.appendChild(btnRow);
+        listSec.appendChild(row);
+      });
+      body.appendChild(listSec);
+    }
+    buildBody();
+    registerDialog(overlay);
   }
   function openSettingsDrawer() {
     if (!store.getSourceRows().length) {
@@ -11294,7 +11791,9 @@ PH.app = function() {
             return r.__filled || r.__fromFilled;
           }),
           printTotalField: resolvePrintTotalField(repDef),
-          largeConfirmed: largePreviewConfirmed
+          largeConfirmed: largePreviewConfirmed,
+          pharmacyProfile: state.pharmacyProfile,
+          userProfile: state.userProfile
         };
         var result = PH.print.renderPreview(previewContainer, outputRows, previewOpts);
         if (result && result.needsConfirm) {
@@ -11437,7 +11936,9 @@ PH.app = function() {
         }),
         printTotalField: resolvePrintTotalField(repDef),
         largeConfirmed,
-        geometryConfirmed
+        geometryConfirmed,
+        pharmacyProfile: state.pharmacyProfile,
+        userProfile: state.userProfile
       });
       if (result && result.geometryInvalid) {
         showToast("هوامش الصفحة الحالية غير صالحة للطباعة: " + result.geometryErrors.join(" — "), false);
@@ -12453,6 +12954,9 @@ PH.app = function() {
       state.settingsOverrides.linked = scopes.linked;
       state.hiddenColumns = scopes.hiddenColumns || {};
       state.savedExportPlan = meta.exportPlan || null;
+      state.userProfile = Object.assign(defaultUserProfile(), meta.userProfile || {});
+      state.pharmacyProfile = Object.assign(defaultPharmacyProfile(), meta.pharmacyProfile || {});
+      state.savedReportPresets = Array.isArray(meta.savedReportPresets) ? meta.savedReportPresets : [];
       migrateSheetScopeSettings(scopes.sheet);
       render();
     }).catch(function() {
@@ -12495,6 +12999,8 @@ PH.app = function() {
     document.getElementById("btn-theme").addEventListener("click", toggleTheme);
     document.getElementById("btn-template").addEventListener("click", downloadTemplate);
     document.getElementById("btn-backup").addEventListener("click", exportWorkspaceBackup);
+    document.getElementById("btn-pharmacy-profile").addEventListener("click", openPharmacyProfileDialog);
+    document.getElementById("btn-saved-views").addEventListener("click", openSavedViewsDialog);
     document.getElementById("btn-restore").addEventListener("click", function() {
       var input = document.createElement("input");
       input.type = "file";
@@ -12532,7 +13038,10 @@ PH.app = function() {
         linked: meta.linked || {},
         hiddenColumns: meta.hiddenColumns || {},
         exportPlan: meta.exportPlan || null,
-        migratedSettings: meta.migratedSettings || 0
+        migratedSettings: meta.migratedSettings || 0,
+        userProfile: meta.userProfile || null,
+        pharmacyProfile: meta.pharmacyProfile || null,
+        savedReportPresets: meta.savedReportPresets || []
       };
     });
   }
@@ -12597,7 +13106,10 @@ PH.app = function() {
       activeMonth: state.activeMonth,
       activeReportId: state.activeReportId,
       dimensionGroups: state.dimensionGroups,
-      hiddenColumns: state.hiddenColumns
+      hiddenColumns: state.hiddenColumns,
+      userProfile: state.userProfile,
+      pharmacyProfile: state.pharmacyProfile,
+      savedReportPresets: state.savedReportPresets
     };
     var blob = new Blob([ JSON.stringify(payload, null, 2) ], {
       type: "application/json;charset=utf-8"
@@ -12715,6 +13227,33 @@ PH.app = function() {
           state.hiddenColumns = sanitizedHidden;
           store.saveSettings("meta", "hiddenColumns", sanitizedHidden).catch(function() {});
         }
+        if (payload.userProfile && typeof payload.userProfile === "object") {
+          var cleanUser = {
+            displayName: typeof payload.userProfile.displayName === "string" ? payload.userProfile.displayName.slice(0, 200) : ""
+          };
+          saveUserProfile(cleanUser);
+        }
+        if (payload.pharmacyProfile && typeof payload.pharmacyProfile === "object") {
+          var srcPharmacy = payload.pharmacyProfile;
+          var cleanPharmacy = {
+            name: typeof srcPharmacy.name === "string" ? srcPharmacy.name.slice(0, 200) : "",
+            code: typeof srcPharmacy.code === "string" ? srcPharmacy.code.slice(0, 100) : "",
+            address: typeof srcPharmacy.address === "string" ? srcPharmacy.address.slice(0, 300) : "",
+            license: typeof srcPharmacy.license === "string" ? srcPharmacy.license.slice(0, 100) : "",
+            printNote: typeof srcPharmacy.printNote === "string" ? srcPharmacy.printNote.slice(0, 300) : "",
+            logo: typeof srcPharmacy.logo === "string" && srcPharmacy.logo.indexOf("data:image") === 0 ? srcPharmacy.logo.slice(0, 700000) : null,
+            signatureRoles: Array.isArray(srcPharmacy.signatureRoles) ? srcPharmacy.signatureRoles.filter(function(r) {
+              return typeof r === "string";
+            }).slice(0, 4) : []
+          };
+          savePharmacyProfile(cleanPharmacy);
+        }
+        if (Array.isArray(payload.savedReportPresets)) {
+          var cleanPresets = payload.savedReportPresets.filter(function(p) {
+            return p && typeof p === "object" && typeof p.reportId === "string" && typeof p.name === "string";
+          }).slice(0, 50);
+          saveReportPresets(cleanPresets);
+        }
         render();
         showToast("تمت استعادة النسخة الاحتياطية");
         } catch (err) {
@@ -12737,7 +13276,17 @@ PH.app = function() {
     openExportDialog,
     openPrintPreview,
     runSelfTest: runSelfTestOverlay,
-    toggleTheme
+    toggleTheme,
+    defaultUserProfile,
+    defaultPharmacyProfile,
+    saveUserProfile,
+    savePharmacyProfile,
+    saveReportPresets,
+    getUserProfile,
+    getPharmacyProfile,
+    getSavedReportPresets,
+    capturePresetFromCurrentView,
+    applyPreset
   };
 }();
 
